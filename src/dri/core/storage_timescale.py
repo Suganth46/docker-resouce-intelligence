@@ -29,6 +29,18 @@ logger = get_logger("storage_timescale")
 Base = declarative_base()
 
 
+class LogRecord(Base):
+    __tablename__ = "container_logs"
+    __table_args__ = (Index("ix_container_logs_cid_ts", "container_id", "timestamp"),)
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    container_id = Column(String(12), nullable=False)
+    container_name = Column(String(256))
+    timestamp = Column(DateTime, nullable=False)
+    level = Column(String(10))
+    message = Column(Text)
+    template_id = Column(String(16), nullable=True)
+
+
 class MetricsSample(Base):
     """ORM model for metrics samples (Hypertable)."""
     __tablename__ = "metrics_samples"
@@ -195,6 +207,44 @@ class TimescaleStorage(StorageBackend):
             def _close_session() -> None:
                 session.close()
             await loop.run_in_executor(None, _close_session)
+
+    async def save_logs(self, entries: List[Dict[str, Any]]) -> None:
+        def save():
+            with self.SessionLocal.begin() as session:
+                records = []
+                for entry in entries:
+                    record = LogRecord(**entry)
+                    if record.timestamp.tzinfo is not None:
+                        record.timestamp = record.timestamp.astimezone(timezone.utc).replace(tzinfo=None)
+                    records.append(record)
+                session.add_all(records)
+
+        try:
+            await asyncio.get_running_loop().run_in_executor(None, save)
+        except Exception as exc:
+            # Database exceptions may embed bind parameters containing log text.
+            logger.error("Failed to save log batch (%s)", type(exc).__name__)
+
+    async def get_recent_logs(self, container_id: str, minutes: int = 15, level: Optional[str] = None, limit: int = 500) -> List[Any]:
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=minutes)
+        def fetch():
+            with self.SessionLocal() as session:
+                query = session.query(LogRecord).filter(
+                    LogRecord.container_id == container_id, LogRecord.timestamp >= cutoff)
+                if level is not None:
+                    query = query.filter(LogRecord.level == level)
+                rows = query.order_by(LogRecord.timestamp.desc(), LogRecord.id.desc()).limit(max(0, limit)).all()
+                return list(reversed(rows))
+
+        return await asyncio.get_running_loop().run_in_executor(None, fetch)
+
+    async def cleanup_old_logs(self, retention_hours: int = 24) -> int:
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=retention_hours)
+        def cleanup():
+            with self.SessionLocal.begin() as session:
+                return session.query(LogRecord).filter(LogRecord.timestamp < cutoff).delete()
+
+        return await asyncio.get_running_loop().run_in_executor(None, cleanup)
 
     async def save_metrics(self, metrics: ContainerMetrics) -> None:
         """Save container metrics sample."""

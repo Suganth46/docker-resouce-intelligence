@@ -126,6 +126,7 @@ async def storage():
     loop = asyncio.get_running_loop()
     def _drop():
         with st.engine.begin() as conn:
+            conn.execute(sa.text("DROP TABLE IF EXISTS container_logs CASCADE"))
             conn.execute(sa.text("DROP TABLE IF EXISTS metrics_samples CASCADE"))
             conn.execute(sa.text("DROP TABLE IF EXISTS alerts CASCADE"))
             conn.execute(sa.text("DROP TABLE IF EXISTS actions CASCADE"))
@@ -480,3 +481,9 @@ async def test_aggregator_works_with_timescale_storage(storage):
     assert result is not None
     assert 0.0 <= result.cpu_percent_5m <= 100.0
     assert 0.0 <= result.memory_percent_5m <= 100.0
+
+
+async def test_log_batch_filter_and_retention(storage):
+    from tests.test_phase7a_logs import check_storage
+
+    await check_storage(storage)

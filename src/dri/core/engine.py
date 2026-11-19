@@ -15,9 +15,19 @@ logger = get_logger("engine")
 
 _warned_metrics = set()
 
+def _metric_unit(metric: str) -> str:
+    if "growth_rate" in metric:
+        return "%/min"
+    return "" if metric.startswith("log_") else "%"
+
+
 def _resolve_metric_value(metric_name: str, metrics: AggregatedMetrics) -> float:
     """Resolve metric name to its value, logging a warning if unknown."""
     metric_map = {
+        "log_errors_1m": metrics.log_errors_1m,
+        "log_errors_5m": metrics.log_errors_5m,
+        "log_warnings_5m": metrics.log_warnings_5m,
+        "log_crash_signals_5m": metrics.log_crash_signals_5m,
         "cpu": metrics.cpu_percent,
         "cpu_5m": metrics.cpu_percent_5m,
         "cpu_15m": metrics.cpu_percent_15m,
@@ -174,7 +184,7 @@ class PolicyEngine:
                             metric=rule.metric,
                             current_value=self._get_metric_value(rule.metric, metrics),
                             threshold=rule.value,
-                            message=f"{rule.metric} {rule.operator} {rule.value}% for {violation_duration:.0f}s",
+                            message=f"{rule.metric} {rule.operator} {rule.value}{_metric_unit(rule.metric)} for {violation_duration:.0f}s",
                         )
                         alerts.append(alert)
                         self._last_alerted[cid][violation_key] = now

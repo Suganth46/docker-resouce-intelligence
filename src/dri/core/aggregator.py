@@ -8,11 +8,13 @@ import statistics
 
 from ..utils.logger import get_logger
 from ..utils.metrics import ContainerMetrics, AggregatedMetrics
+from .log_analyzer import LogStats
 from .storage import MetricsSample
 from .storage_base import StorageBackend
 from .recommender import z_score_anomaly
 
 logger = get_logger("aggregator")
+
 
 
 class MetricsAggregator:
@@ -38,6 +40,7 @@ class MetricsAggregator:
         self._stopped_at: Dict[str, datetime] = {}
 
         # In-memory restart counters per container ID (populated by DRIAgent / _on_docker_event).
+        self._log_stats: Dict[str, LogStats] = {}
         self.restart_counts: Dict[str, int] = {}
 
     def _get_window(self, container_id: str) -> deque:
@@ -298,6 +301,7 @@ class MetricsAggregator:
             status = "stopped" if container_id in self._stopped_at else "running"
             restart_count = self.restart_counts.get(latest.container_id, 0)
 
+            logs = self._log_stats.get(container_id) or LogStats()
             agg_metrics = AggregatedMetrics(
                 container_id=latest.container_id,
                 container_name=latest.container_name,
@@ -320,6 +324,10 @@ class MetricsAggregator:
                 block_io_write=latest.block_io_write,
                 pids=latest.pids,
                 restart_count=restart_count,
+                log_errors_1m=logs.errors_1m,
+                log_errors_5m=logs.errors_5m,
+                log_warnings_5m=logs.warnings_5m,
+                log_crash_signals_5m=logs.crash_signals_5m,
             )
 
             # Detect anomalies (pass the window for z-score baseline)
@@ -371,8 +379,12 @@ class MetricsAggregator:
         for container_id in to_remove:
             del self._windows[container_id]
             self._stopped_at.pop(container_id, None)
+            self._log_stats.pop(container_id, None)
             self.restart_counts.pop(container_id, None)
             logger.debug(f"Removed old container window: {container_id}")
+
+    def update_log_stats(self, container_id: str, stats: LogStats) -> None:
+        self._log_stats[container_id] = stats
 
     def update_restart_count(self, container_id: str, count: int) -> None:
         """Update the stored restart count for a container."""
@@ -425,5 +437,6 @@ class MetricsAggregator:
         ]
         for cid in to_evict:
             self._windows.pop(cid, None)
+            self._log_stats.pop(cid, None)
             del self._stopped_at[cid]
             logger.info(f"Evicted stopped container window: {cid}")
