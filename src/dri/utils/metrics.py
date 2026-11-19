@@ -101,7 +101,10 @@ class AggregatedMetrics:
     
     # Image used to run this container
     image: str = ""
-
+    log_errors_1m: int = 0
+    log_errors_5m: int = 0
+    log_warnings_5m: int = 0
+    log_crash_signals_5m: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary, serializing datetime."""

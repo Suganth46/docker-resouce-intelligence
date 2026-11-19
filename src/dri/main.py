@@ -8,6 +8,8 @@ from typing import Optional
 import docker
 
 from .config import DRIConfig, load_config, watch_config, StorageConfig
+from .core.log_analyzer import LogAnalyzer
+from .core.log_collector import DockerLogCollector
 from .core.collector import DockerStatsCollector
 from .core.storage import MetricsStorage
 from .core.storage_base import StorageBackend
@@ -70,6 +72,8 @@ class DRIAgent:
         self.storage: Optional[StorageBackend] = None
         self.aggregator: Optional[MetricsAggregator] = None
         self.policy_engine: Optional[PolicyEngine] = None
+        self.log_collector: Optional[DockerLogCollector] = None
+        self.log_analyzer: Optional[LogAnalyzer] = None
         self.event_listener: Optional[DockerEventListener] = None
         self.api_server: Optional[DRIAPIServer] = None
         self.webhook_dispatcher: Optional[WebhookDispatcher] = None
@@ -110,6 +114,12 @@ class DRIAgent:
             # Storage — backend determined by config flag
             self.storage = _create_storage(self.config.storage)
             await self.storage.init()
+
+            if self.config.logs.enabled:
+                self.log_analyzer = LogAnalyzer(self.config.logs.crash_patterns)
+                self.log_collector = DockerLogCollector(
+                    self.docker_client, self.config.logs, self.storage, self.log_analyzer.ingest
+                )
 
             # Aggregator
             self.aggregator = MetricsAggregator(self.storage)
@@ -235,6 +245,9 @@ class DRIAgent:
                     continue
 
                 # Aggregate all metrics
+                if self.log_analyzer:
+                    for cid in list(self.aggregator._windows):
+                        self.aggregator.update_log_stats(cid, self.log_analyzer.stats(cid))
                 all_metrics = await self.aggregator.aggregate_all()
 
                 # Cleanup old data periodically (every 100 metrics processed by agent)
@@ -261,6 +274,9 @@ class DRIAgent:
                     continue
 
                 # Evaluate policies for all containers
+                if self.log_analyzer:
+                    for cid in list(self.aggregator._windows):
+                        self.aggregator.update_log_stats(cid, self.log_analyzer.stats(cid))
                 all_metrics = await self.aggregator.aggregate_all()
 
                 for container_id, metrics in all_metrics.items():
@@ -511,6 +527,8 @@ class DRIAgent:
         def signal_handler(sig, frame):
             logger_module.info(f"Received signal {sig}, shutting down...")
             self.running = False
+            if self.log_collector:
+                self.log_collector.stop()
 
         signal.signal(signal.SIGTERM, signal_handler)
         signal.signal(signal.SIGINT, signal_handler)
@@ -525,6 +543,9 @@ class DRIAgent:
                 self._recommendation_cache_loop(),
                 self._container_status_loop(),
             ]
+
+            if self.log_collector:
+                tasks.append(self.log_collector.run())
 
             if self.api_server:
                 logger_module.info(
@@ -551,6 +572,10 @@ class DRIAgent:
 
             if self.event_listener:
                 self.event_listener.stop()
+
+            if self.log_collector:
+                self.log_collector.stop()
+                await self.log_collector.close()
 
             if self.storage:
                 await self.storage.close()

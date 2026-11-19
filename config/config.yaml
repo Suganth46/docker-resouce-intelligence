@@ -12,6 +12,19 @@ container_status_interval: 15
 # evicting it entirely from the aggregator.
 container_status_cleanup_minutes: 5
 
+# Docker log collection and policy signals. Patterns are case-insensitive regexes.
+logs:
+  enabled: true
+  retention_hours: 24  # Log volume typically exceeds metrics volume.
+  max_line_length: 1000
+  max_lines_per_second: 200  # Per container; warnings, errors and crash signals are exempt.
+  flush_interval_seconds: 2.0
+  flush_batch_size: 200
+  discover_interval_seconds: 15
+  max_followed_containers: 50
+  error_patterns: [ERROR, FATAL, CRITICAL, Exception, Traceback, panic]
+  crash_patterns: [OutOfMemoryError, Killed, connection refused, timed out, too many open files, ECONNREFUSED, no space left]
+
 storage:
   sqlite_path: "/var/lib/dri/metrics.db"
 

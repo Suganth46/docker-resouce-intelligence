@@ -172,3 +172,15 @@ class StorageBackend(ABC):
         horizon_hours: int,
     ) -> Optional[Dict[str, Any]]:
         """Return cached forecast dict (with ``computed_at`` injected) or ``None``."""
+
+    @abstractmethod
+    async def save_logs(self, entries: List[Dict[str, Any]]) -> None:
+        """Persist a batch of sanitized log events."""
+
+    @abstractmethod
+    async def get_recent_logs(self, container_id: str, minutes: int = 15, level: Optional[str] = None, limit: int = 500) -> List[Any]:
+        """Return the latest matching events in chronological order."""
+
+    @abstractmethod
+    async def cleanup_old_logs(self, retention_hours: int = 24) -> int:
+        """Delete expired log events and return the affected row count."""

@@ -6,6 +6,9 @@ from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, Field, field_validator
 import yaml
 import os
+import re
+
+from .core.log_parser import DEFAULT_CRASH, DEFAULT_ERRORS
 
 from .utils.logger import get_logger
 
@@ -99,6 +102,29 @@ class APIConfig(BaseModel):
     api_key: Optional[str] = None
 
 
+class LogConfig(BaseModel):
+    enabled: bool = True
+    retention_hours: int = Field(24, gt=0)
+    max_line_length: int = Field(1000, gt=0)
+    max_lines_per_second: int = Field(200, gt=0)
+    flush_interval_seconds: float = Field(2.0, gt=0)
+    flush_batch_size: int = Field(200, gt=0)
+    discover_interval_seconds: int = Field(15, gt=0)
+    max_followed_containers: int = Field(50, gt=0)
+    error_patterns: List[str] = Field(default_factory=lambda: list(DEFAULT_ERRORS))
+    crash_patterns: List[str] = Field(default_factory=lambda: list(DEFAULT_CRASH))
+
+    @field_validator("error_patterns", "crash_patterns")
+    @classmethod
+    def validate_patterns(cls, patterns: List[str]) -> List[str]:
+        for pattern in patterns:
+            try:
+                re.compile(pattern, re.I)
+            except re.error as exc:
+                raise ValueError(f"Invalid log regex {pattern!r}: {exc}") from exc
+        return patterns
+
+
 class DRIConfig(BaseModel):
     """Main DRI configuration."""
     log_level: str = "INFO"
@@ -120,6 +146,7 @@ class DRIConfig(BaseModel):
     # dashboard show recent history briefly without lingering for 24 h.
     container_status_cleanup_minutes: int = 5
 
+    logs: LogConfig = Field(default_factory=LogConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     api: APIConfig = Field(default_factory=APIConfig)
     actions: ActionConfig = Field(default_factory=ActionConfig)

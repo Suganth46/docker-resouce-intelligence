@@ -33,6 +33,10 @@ class MetricsResponse(BaseModel):
     block_io_write: int = 0
     pids: int = 0
     restart_count: int = 0
+    log_errors_1m: int = 0
+    log_errors_5m: int = 0
+    log_warnings_5m: int = 0
+    log_crash_signals_5m: int = 0
 
 
 class ContainerMetricsListResponse(BaseModel):
