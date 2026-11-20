@@ -24,6 +24,7 @@ def _metric_unit(metric: str) -> str:
 def _resolve_metric_value(metric_name: str, metrics: AggregatedMetrics) -> float:
     """Resolve metric name to its value, logging a warning if unknown."""
     metric_map = {
+        "log_new_templates_5m": metrics.log_new_templates_5m,
         "log_errors_1m": metrics.log_errors_1m,
         "log_errors_5m": metrics.log_errors_5m,
         "log_warnings_5m": metrics.log_warnings_5m,

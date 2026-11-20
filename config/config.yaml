@@ -14,6 +14,7 @@ container_status_cleanup_minutes: 5
 
 # Docker log collection and policy signals. Patterns are case-insensitive regexes.
 logs:
+  warmup_minutes: 10  # Observe each container before flagging new error patterns.
   enabled: true
   retention_hours: 24  # Log volume typically exceeds metrics volume.
   max_line_length: 1000

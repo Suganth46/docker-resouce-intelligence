@@ -324,6 +324,7 @@ class MetricsAggregator:
                 block_io_write=latest.block_io_write,
                 pids=latest.pids,
                 restart_count=restart_count,
+                log_new_templates_5m=logs.new_templates_5m,
                 log_errors_1m=logs.errors_1m,
                 log_errors_5m=logs.errors_5m,
                 log_warnings_5m=logs.warnings_5m,
@@ -332,6 +333,8 @@ class MetricsAggregator:
 
             # Detect anomalies (pass the window for z-score baseline)
             is_anomaly, anomaly_type = self._detect_anomaly(agg_metrics, window=window)
+            if not is_anomaly and logs.anomaly:
+                is_anomaly, anomaly_type = True, logs.anomaly
             agg_metrics.is_anomaly = is_anomaly
             agg_metrics.anomaly_type = anomaly_type
 

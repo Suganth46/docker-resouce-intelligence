@@ -103,6 +103,7 @@ class APIConfig(BaseModel):
 
 
 class LogConfig(BaseModel):
+    warmup_minutes: int = Field(10, ge=0)
     enabled: bool = True
     retention_hours: int = Field(24, gt=0)
     max_line_length: int = Field(1000, gt=0)
