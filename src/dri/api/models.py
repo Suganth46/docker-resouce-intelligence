@@ -37,6 +37,7 @@ class MetricsResponse(BaseModel):
     log_errors_5m: int = 0
     log_warnings_5m: int = 0
     log_crash_signals_5m: int = 0
+    log_new_templates_5m: int = 0
 
 
 class ContainerMetricsListResponse(BaseModel):

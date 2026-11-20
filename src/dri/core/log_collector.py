@@ -156,9 +156,9 @@ class DockerLogCollector:
             level=level,
             message=message,
         )
-        self.batch.append(entry)
         if self.callback:
             self.callback(entry)
+        self.batch.append(entry)
 
     def _event(self, cid, ts, message):
         # Mask before truncation too: cutting a credential in half can defeat

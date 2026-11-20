@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from datetime import datetime, timezone
@@ -110,3 +111,29 @@ class MultilineJoiner:
         events = [(self.first, "\n".join(self.lines))] if self.lines else []
         self.lines.clear()
         return events
+
+
+# Apply these substitutions sequentially so numbers inside larger tokens
+# disappear with the token, including IP ports and fractional seconds.
+_TEMPLATE_TOKENS = tuple(
+    re.compile(pattern)
+    for pattern in (
+        r"\b\d{4}-\d\d-\d\d[Tt ]\d\d:\d\d:\d\d(?:[.,]\d+)?(?:[Zz]|[+-]\d\d:?\d\d)?",
+        r"(?i)\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b",
+        r"\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b",
+        r"(?i)\b(?:0x[0-9a-f]+|[0-9a-f]{8,})\b",
+        r"""("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')""",
+        r"(?<![\w/])(?:[A-Za-z]:)?[\\/]?(?:[\w.<>*-]+[\\/])+[\w.<>*-]+",
+        r"[+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?",
+    )
+)
+
+
+def normalize_template(message: str) -> str:
+    for pattern in _TEMPLATE_TOKENS:
+        message = pattern.sub("<*>", message)
+    return " ".join(message.split())
+
+
+def template_id(template: str) -> str:
+    return hashlib.sha1(template.encode("utf-8")).hexdigest()[:12]

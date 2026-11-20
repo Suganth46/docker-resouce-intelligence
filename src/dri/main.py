@@ -116,7 +116,9 @@ class DRIAgent:
             await self.storage.init()
 
             if self.config.logs.enabled:
-                self.log_analyzer = LogAnalyzer(self.config.logs.crash_patterns)
+                self.log_analyzer = LogAnalyzer(
+                    self.config.logs.crash_patterns, warmup_minutes=self.config.logs.warmup_minutes
+                )
                 self.log_collector = DockerLogCollector(
                     self.docker_client, self.config.logs, self.storage, self.log_analyzer.ingest
                 )
