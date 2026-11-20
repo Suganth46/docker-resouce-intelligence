@@ -58,6 +58,49 @@ export interface ContainerMetrics {
   block_io_write: number;
   pids: number;
   restart_count?: number;
+  log_errors_1m?: number;
+  log_errors_5m?: number;
+  log_warnings_5m?: number;
+  log_crash_signals_5m?: number;
+  log_new_templates_5m?: number;
+}
+
+export interface LogEntry {
+  timestamp: string;
+  level: string;
+  message: string;
+  template_id: string | null;
+}
+
+export interface LogsData {
+  timestamp: string;
+  container_id: string;
+  logs: LogEntry[];
+  total_returned: number;
+}
+
+interface LogTemplate {
+  template_id: string;
+  template: string;
+  level: string;
+  count: number;
+  first_seen: string;
+  sample: string;
+}
+
+export interface ExplainData {
+  container_id: string;
+  window_minutes: number;
+  generated_at: string;
+  error_count: number;
+  top_templates: LogTemplate[];
+  new_templates: LogTemplate[];
+  crash_signals: Record<string, number>;
+  related_events: { action: string; timestamp: string; attributes: Record<string, unknown> }[];
+  metric_context: { memory_percent: number | null; memory_growth_rate_5m: number | null; cpu_percent: number | null };
+  verdict: string;
+  confidence: 'low' | 'medium' | 'high';
+  reasons: string[];
 }
 
 export interface MetricsList {
@@ -183,6 +226,10 @@ export interface EventsData {
 // ── API Functions ──────────────────────────────────────────────────────────
 
 export const api = {
+  logs: (container_id: string, minutes = 15, level?: string, limit = 200) =>
+    get<LogsData>(`/api/v1/logs/${encodeURIComponent(container_id)}`, { minutes, limit, ...(level ? { level } : {}) }),
+  explain: (container_id: string, window_minutes = 10) =>
+    get<ExplainData>(`/api/v1/containers/${encodeURIComponent(container_id)}/explain`, { window_minutes }),
   health: () => get<HealthData>('/api/v1/health'),
   metrics: (container_id?: string) =>
     get<MetricsList>('/api/v1/metrics', container_id ? { container_id } : undefined),

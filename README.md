@@ -40,6 +40,7 @@ The goal is simple: **fewer pages, fewer wasted resources, and more confidence i
   - **Isolate**: pin containers to specific CPU sets
   - **Heal**: gracefully restart containers before they crash
   - **Webhooks**: trigger custom HTTP callbacks, protected by a circuit breaker so a dead endpoint is never hammered
+- **Log Intelligence** groups masked container logs into templates and correlates error patterns with Docker events and resource metrics. [Evidence and verdict rules](docs/log-intelligence.md)
 - **Docker Event Tracking**: OOM, die, start, stop, create, and destroy events, plus automatic restart counting.
 - **Container Lifecycle Awareness**: stopped containers are flagged and cleanly evicted after a grace period.
 - **Modern Dashboard**: a React + Vite control-tower UI with seven live views.
@@ -230,7 +231,7 @@ Stop everything with `docker-compose down`.
 
 ## Configuration
 
-Edit `config/config.yaml` to customise the agent.
+Edit `config/config.yaml` to customise the agent. Docker log collection requires a readable log driver such as `json-file`, `local` or `journald`, or a readable Docker logging cache.
 
 ```yaml
 log_level: INFO
@@ -241,6 +242,19 @@ aggregator_interval: 10     # seconds between aggregations
 policy_check_interval: 10   # seconds between policy evaluations
 container_status_interval: 15          # poll for stopped/started containers
 container_status_cleanup_minutes: 5    # evict stopped containers after this long
+
+logs:
+  warmup_minutes: 10  # Observe each container before flagging new error patterns.
+  enabled: true
+  retention_hours: 24  # Log volume typically exceeds metrics volume.
+  max_line_length: 1000
+  max_lines_per_second: 200  # Per container; warnings, errors and crash signals are exempt.
+  flush_interval_seconds: 2.0
+  flush_batch_size: 200
+  discover_interval_seconds: 15
+  max_followed_containers: 50
+  error_patterns: [ERROR, FATAL, CRITICAL, Exception, Traceback, panic]
+  crash_patterns: [OutOfMemoryError, Killed, connection refused, timed out, too many open files, ECONNREFUSED, no space left]
 
 storage:
   backend: "sqlite"         # or "timescaledb"
@@ -286,7 +300,7 @@ global_policy:
       action: "throttle"
 ```
 
-Available policy metrics: `cpu`, `cpu_5m`, `cpu_15m`, `cpu_60m`, `memory`, `memory_5m`, `memory_15m`, `memory_60m`, `memory_growth_rate_1m`, `memory_growth_rate_5m`.
+Available policy metrics: `cpu`, `cpu_5m`, `cpu_15m`, `cpu_60m`, `memory`, `memory_5m`, `memory_15m`, `memory_60m`, `memory_growth_rate_1m`, `memory_growth_rate_5m`, `log_errors_1m`, `log_errors_5m`, `log_warnings_5m`, `log_crash_signals_5m`, `log_new_templates_5m`.
 
 ### Per-container policy example
 
@@ -323,6 +337,8 @@ By default (`api_key: null`) authentication is off, which keeps local developmen
 | `GET` | `/api/v1/events` | When configured | Docker lifecycle events (paginated, filterable) |
 | `GET` | `/api/v1/policies` | When configured | Active policies |
 | `GET` | `/api/v1/recommendations` | When configured | Right-sized limits per container (cached; `?force=true` to recompute) |
+| `GET` | `/api/v1/logs/{container_id}` | When configured | Masked recent lines, filtered by minutes, level and limit |
+| `GET` | `/api/v1/containers/{container_id}/explain` | When configured | Heuristic verdict and supporting evidence for a 1–120 minute window |
 | `GET` | `/api/v1/forecast/<container_id>` | When configured | Usage forecast (cached; `?force=true` to recompute) |
 | `GET` | `/metrics` | When configured | Prometheus-format metrics |
 

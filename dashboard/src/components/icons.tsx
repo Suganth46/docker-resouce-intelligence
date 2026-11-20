@@ -279,3 +279,10 @@ export function IconContainer({ size = 14 }: { size?: number }) {
     </svg>
   );
 }
+
+export function IconLog({ size = 16 }: { size?: number }) {
+  return <svg {...PROPS} width={size} height={size} aria-hidden="true">
+    <rect x="2" y="2" width="12" height="12" rx="1" />
+    <path d="M5 5h6M5 8h6M5 11h4" />
+  </svg>;
+}

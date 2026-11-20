@@ -66,6 +66,7 @@ class DRIAPIServer:
         aggregator: MetricsAggregator,
         policy_engine: PolicyEngine,
         agent: Optional[Any] = None,
+        *, log_analyzer: Optional[Any] = None,
     ):
         """
         Initialize API server.
@@ -81,6 +82,7 @@ class DRIAPIServer:
         self.storage = storage
         self.aggregator = aggregator
         self.policy_engine = policy_engine
+        self.log_analyzer = log_analyzer
         self.agent = agent
 
         # Configure API key authentication state
@@ -123,6 +125,7 @@ class DRIAPIServer:
             self.recommender,
             self.forecaster,
             self.config,
+            log_an=self.log_analyzer,
         )
 
         @asynccontextmanager
@@ -202,6 +205,8 @@ class DRIAPIServer:
                 "endpoints": [
                     "/api/v1/health",
                     "/api/v1/metrics",
+                    "/api/v1/logs/{container_id}",
+                    "/api/v1/containers/{container_id}/explain",
                     "/api/v1/alerts",
                     "/api/v1/actions/history",
                     "/api/v1/policies",

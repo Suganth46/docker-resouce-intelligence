@@ -8,7 +8,7 @@ from typing import Optional
 import docker
 
 from .config import DRIConfig, load_config, watch_config, StorageConfig
-from .core.log_analyzer import LogAnalyzer
+from .core.log_analyzer import LogAnalyzer, summary
 from .core.log_collector import DockerLogCollector
 from .core.collector import DockerStatsCollector
 from .core.storage import MetricsStorage
@@ -117,7 +117,8 @@ class DRIAgent:
 
             if self.config.logs.enabled:
                 self.log_analyzer = LogAnalyzer(
-                    self.config.logs.crash_patterns, warmup_minutes=self.config.logs.warmup_minutes
+                    self.config.logs.crash_patterns, warmup_minutes=self.config.logs.warmup_minutes,
+                    storage=self.storage,
                 )
                 self.log_collector = DockerLogCollector(
                     self.docker_client, self.config.logs, self.storage, self.log_analyzer.ingest
@@ -157,6 +158,7 @@ class DRIAgent:
                 self.aggregator,
                 self.policy_engine,
                 self,  # agent reference for live counters
+                log_analyzer=self.log_analyzer,
             )
 
             logger_module.info("DRI agent initialized successfully")
@@ -172,6 +174,19 @@ class DRIAgent:
             f"Alert generated: {alert.alert_type} "
             f"[container={alert.container_id}, metric={alert.metric}, value={alert.current_value}]"
         )
+
+        if self.log_analyzer:
+            async def enrich():
+                metrics = await self.aggregator.aggregate(alert.container_id) if self.aggregator else None
+                return await self.log_analyzer.explain(alert.container_id, 10, metrics)
+
+            try:
+                explanation = await asyncio.wait_for(enrich(), timeout=2.0)
+                if explanation.verdict != "none":
+                    evidence = " | evidence: " + summary(explanation)
+                    alert.message = alert.message[:500 - len(evidence)] + evidence
+            except Exception as exc:
+                logger_module.warning("Alert enrichment unavailable", container_id=alert.container_id, error=type(exc).__name__)
 
         # Save to storage
         if self.storage:
