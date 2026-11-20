@@ -1,7 +1,7 @@
 """Pydantic models for HTTP API responses."""
 
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Literal
 from pydantic import BaseModel, Field
 
 
@@ -224,3 +224,53 @@ class ForecastResponse(BaseModel):
 
     # Cache metadata — present when served from background cache
     computed_at: Optional[datetime] = None
+
+
+class LogEntryResponse(BaseModel):
+    timestamp: datetime
+    level: str
+    message: str
+    template_id: Optional[str]
+
+
+class LogsResponse(BaseModel):
+    timestamp: datetime
+    container_id: str
+    logs: List[LogEntryResponse]
+    total_returned: int
+
+
+class TemplateResponse(BaseModel):
+    template_id: str
+    template: str
+    level: str
+    count: int
+    first_seen: datetime
+    sample: str
+
+
+class RelatedEventResponse(BaseModel):
+    action: str
+    timestamp: datetime
+    attributes: Dict[str, Any]
+
+
+class LogMetricContext(BaseModel):
+    memory_percent: Optional[float]
+    memory_growth_rate_5m: Optional[float]
+    cpu_percent: Optional[float]
+
+
+class ExplanationResponse(BaseModel):
+    container_id: str
+    window_minutes: int
+    generated_at: datetime
+    error_count: int
+    top_templates: List[TemplateResponse]
+    new_templates: List[TemplateResponse]
+    crash_signals: Dict[str, int]
+    related_events: List[RelatedEventResponse]
+    metric_context: LogMetricContext
+    verdict: str
+    confidence: Literal["low", "medium", "high"]
+    reasons: List[str]

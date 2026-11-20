@@ -1,3 +1,4 @@
+import { metricUnit } from '../utils/format';
 import { api, type Policy, type PolicyRule } from '../api/client';
 import { usePolling } from '../hooks/usePolling';
 import { usePollingInterval } from '../hooks/PollingContext';
@@ -44,7 +45,7 @@ function RuleRow({ rule, idx }: { rule: PolicyRule; idx: number }) {
         {rule.operator}
       </td>
       <td style={{ fontWeight: 700, color: 'var(--accent-amber)' }}>
-        {rule.value}%
+        {rule.value}{metricUnit(rule.metric)}
       </td>
       <td style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
         {rule.duration_seconds}s

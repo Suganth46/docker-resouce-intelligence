@@ -1,3 +1,4 @@
+import { metricUnit } from '../utils/format';
 import React from 'react';
 import type { Alert } from '../api/client';
 import {
@@ -55,9 +56,9 @@ export const AlertRow: React.FC<AlertRowProps> = ({ alert }) => {
       <td>{alert.metric}</td>
       <td>
         <span style={{ color: 'var(--accent-red)', fontWeight: 700 }}>
-          {alert.current_value.toFixed(1)}%
+          {alert.current_value.toFixed(1)}{metricUnit(alert.metric)}
         </span>
-        {' '}/ {alert.threshold}%
+        {' '}/ {alert.threshold}{metricUnit(alert.metric)}
       </td>
       <td style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{ts}</td>
       <td>

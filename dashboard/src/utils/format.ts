@@ -8,3 +8,8 @@ export function fmtBytes(b: number | undefined | null): string {
   if (b >= 1e3) return `${(b / 1e3).toFixed(1)} KB`;
   return `${b} B`;
 }
+
+export function metricUnit(metric: string): string {
+  if (metric.includes('growth_rate')) return '%/min';
+  return /^(cpu|memory)/.test(metric) ? '%' : '';
+}

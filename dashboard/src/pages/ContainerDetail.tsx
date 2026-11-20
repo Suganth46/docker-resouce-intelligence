@@ -1,3 +1,4 @@
+import { LogEvidence } from '../components/LogEvidence';
 import { useState, useEffect } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -264,6 +265,8 @@ export default function ContainerDetail({ container, onClose }: ContainerDetailP
             No recommendation available — need at least 10 historical samples.
           </div>
         )}
+
+        <LogEvidence key={container.container_id} containerId={container.container_id} />
 
         {/* Forecast */}
         <div className="section-header" style={{ marginBottom: 12 }}>

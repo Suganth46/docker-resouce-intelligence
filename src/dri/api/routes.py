@@ -11,7 +11,7 @@ from ..core.storage_base import StorageBackend
 from ..core.aggregator import MetricsAggregator
 from ..core.engine import PolicyEngine
 from .models import (
-    MetricsResponse,
+    MetricsResponse, LogEntryResponse, LogsResponse, ExplanationResponse,
     ContainerMetricsListResponse,
     AlertResponse,
     AlertsResponse,
@@ -50,6 +50,7 @@ policy_engine: Optional[PolicyEngine] = None
 agent: Optional[Any] = None         # DRIAgent reference for live counters
 recommender: Optional[Any] = None   # ResourceRecommender
 forecaster: Optional[Any] = None    # MetricsForecaster
+log_analyzer: Optional[Any] = None
 start_time: float = time.time()
 
 
@@ -61,9 +62,12 @@ def set_dependencies(
     rec: Optional[Any] = None,
     fore: Optional[Any] = None,
     cfg: Optional[Any] = None,
+    *, log_an: Optional[Any] = None,
 ) -> None:
     """Inject dependencies into routes."""
     global storage, aggregator, policy_engine, agent, recommender, forecaster
+    global log_analyzer
+    log_analyzer = log_an
     storage = s
     aggregator = a
     policy_engine = pe
@@ -480,3 +484,24 @@ async def get_forecast(
             )
 
         return ForecastResponse(**result.to_dict())
+
+
+@router.get("/logs/{container_id}", response_model=LogsResponse)
+async def container_logs(container_id: str, minutes: int = Query(15, ge=1, le=1440),
+                         level: Optional[str] = Query(None, pattern="^(ERROR|WARN|INFO|DEBUG)$"),
+                         limit: int = Query(200, ge=1, le=1000)):
+    if log_analyzer is None or storage is None:
+        raise HTTPException(503, "Log analysis not enabled")
+    rows = await storage.get_recent_logs(container_id, minutes, level, limit)
+    return LogsResponse(timestamp=datetime.now(timezone.utc), container_id=container_id,
+                        logs=[LogEntryResponse.model_validate(row, from_attributes=True) for row in rows],
+                        total_returned=len(rows))
+
+
+@router.get("/containers/{container_id}/explain", response_model=ExplanationResponse)
+async def explain_container(container_id: str, window_minutes: int = Query(10, ge=1, le=120)):
+    """Correlate logs, resource metrics and Docker events using ordered heuristic rules."""
+    if log_analyzer is None:
+        raise HTTPException(503, "Log analysis not enabled")
+    metrics = await aggregator.aggregate(container_id) if aggregator else None
+    return await log_analyzer.explain(container_id, window_minutes, metrics)
