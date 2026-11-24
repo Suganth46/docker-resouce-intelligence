@@ -62,6 +62,7 @@ class PolicyEngine:
         Args:
             config: DRI configuration with policies
         """
+        self._excluded_ids = set()
         self.config = config
         # violation_key -> first-breach timestamp (simplified: just rule.metric, no container_id prefix)
         self._violation_tracker: Dict[str, Dict[str, datetime]] = defaultdict(dict)
@@ -127,6 +128,12 @@ class PolicyEngine:
         Yields:
             Alert if threshold breached
         """
+        if self.config.excludes_name(metrics.container_name):  # policy_exclude_names
+            if metrics.container_id not in self._excluded_ids:
+                self._excluded_ids.add(metrics.container_id)
+                logger.debug(f"Skipping policies for excluded container {metrics.container_name}")
+            return None
+
         # Get applicable policies (global + container-specific)
         applicable_policies = [self.config.global_policy]
 

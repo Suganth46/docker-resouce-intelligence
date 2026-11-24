@@ -1,0 +1,309 @@
+[
+  {
+    "verdict": "oom_kill_confirmed",
+    "confidence": "high",
+    "reasons": [
+      "oom event at 14:01:05 UTC",
+      "Memory reached 97%"
+    ],
+    "top_templates": [
+      {
+        "template": "Killed worker <*>",
+        "count": 2,
+        "level": "ERROR",
+        "template_id": "42a7139cc3d1",
+        "first_seen": "2026-11-24T09:55:00",
+        "sample": "Killed worker <*>"
+      }
+    ],
+    "crash_signals": {
+      "Killed": 2
+    },
+    "metric_context": {
+      "memory_percent": 97
+    },
+    "related_events": [
+      {
+        "action": "oom",
+        "timestamp": "2026-11-24T09:58:00",
+        "attributes": {}
+      }
+    ],
+    "container_id": "case-01",
+    "window_minutes": 10,
+    "generated_at": "2026-11-24T10:00:00",
+    "new_templates": [],
+    "error_count": 2
+  },
+  {
+    "verdict": "crash_loop",
+    "confidence": "high",
+    "reasons": [
+      "4 die events in 10 minutes"
+    ],
+    "top_templates": [
+      {
+        "template": "startup failed",
+        "count": 4,
+        "level": "ERROR",
+        "template_id": "bb8d18bc9de3",
+        "first_seen": "2026-11-24T09:55:00",
+        "sample": "startup failed"
+      }
+    ],
+    "crash_signals": {},
+    "metric_context": {
+      "memory_percent": 38
+    },
+    "related_events": [
+      {
+        "action": "die",
+        "timestamp": "2026-11-24T09:58:00",
+        "attributes": {}
+      },
+      {
+        "action": "start",
+        "timestamp": "2026-11-24T09:58:00",
+        "attributes": {}
+      },
+      {
+        "action": "die",
+        "timestamp": "2026-11-24T09:58:00",
+        "attributes": {}
+      },
+      {
+        "action": "die",
+        "timestamp": "2026-11-24T09:58:00",
+        "attributes": {}
+      },
+      {
+        "action": "die",
+        "timestamp": "2026-11-24T09:58:00",
+        "attributes": {}
+      }
+    ],
+    "container_id": "case-02",
+    "window_minutes": 10,
+    "generated_at": "2026-11-24T10:00:00",
+    "new_templates": [],
+    "error_count": 4
+  },
+  {
+    "verdict": "dependency_failure",
+    "confidence": "medium",
+    "reasons": [
+      "12 lines match connection refused"
+    ],
+    "top_templates": [
+      {
+        "template": "connection refused to <*>",
+        "count": 12,
+        "level": "ERROR",
+        "template_id": "b18d2df7b1dc",
+        "first_seen": "2026-11-24T09:55:00",
+        "sample": "connection refused to <*>"
+      }
+    ],
+    "crash_signals": {
+      "connection refused": 12
+    },
+    "metric_context": {
+      "cpu_percent": 2
+    },
+    "related_events": [],
+    "container_id": "case-03",
+    "window_minutes": 10,
+    "generated_at": "2026-11-24T10:00:00",
+    "new_templates": [],
+    "error_count": 12
+  },
+  {
+    "verdict": "resource_exhaustion",
+    "confidence": "medium",
+    "reasons": [
+      "8 lines match no space left"
+    ],
+    "top_templates": [
+      {
+        "template": "write failed: no space left",
+        "count": 8,
+        "level": "ERROR",
+        "template_id": "2ecb104d367a",
+        "first_seen": "2026-11-24T09:55:00",
+        "sample": "write failed: no space left"
+      }
+    ],
+    "crash_signals": {
+      "no space left": 8
+    },
+    "metric_context": {},
+    "related_events": [],
+    "container_id": "case-04",
+    "window_minutes": 10,
+    "generated_at": "2026-11-24T10:00:00",
+    "new_templates": [],
+    "error_count": 8
+  },
+  {
+    "verdict": "error_spike",
+    "confidence": "medium",
+    "reasons": [
+      "80 errors this minute after a zero baseline"
+    ],
+    "top_templates": [
+      {
+        "template": "request failed",
+        "count": 80,
+        "level": "ERROR",
+        "template_id": "4d0255e85ede",
+        "first_seen": "2026-11-24T09:55:00",
+        "sample": "request failed"
+      }
+    ],
+    "crash_signals": {},
+    "metric_context": {
+      "cpu_percent": 30
+    },
+    "related_events": [],
+    "container_id": "case-05",
+    "window_minutes": 10,
+    "generated_at": "2026-11-24T10:00:00",
+    "new_templates": [],
+    "error_count": 80
+  },
+  {
+    "verdict": "none",
+    "confidence": "low",
+    "reasons": [
+      "No heuristic matched across 0 errors and 0 Docker events"
+    ],
+    "top_templates": [],
+    "crash_signals": {},
+    "metric_context": {},
+    "related_events": [],
+    "container_id": "case-06",
+    "window_minutes": 10,
+    "generated_at": "2026-11-24T10:00:00",
+    "new_templates": [],
+    "error_count": 0
+  },
+  {
+    "verdict": "none",
+    "confidence": "low",
+    "reasons": [
+      "A single die event with exit code 137 lacks memory corroboration"
+    ],
+    "top_templates": [],
+    "crash_signals": {},
+    "metric_context": {
+      "memory_percent": 23
+    },
+    "related_events": [
+      {
+        "action": "die",
+        "timestamp": "2026-11-24T09:58:00",
+        "attributes": {}
+      }
+    ],
+    "container_id": "case-07",
+    "window_minutes": 10,
+    "generated_at": "2026-11-24T10:00:00",
+    "new_templates": [],
+    "error_count": 0
+  },
+  {
+    "verdict": "dependency_failure",
+    "confidence": "medium",
+    "reasons": [
+      "7 lines match timed out; CPU is elevated"
+    ],
+    "top_templates": [
+      {
+        "template": "upstream timed out",
+        "count": 7,
+        "level": "ERROR",
+        "template_id": "c0ebfd772165",
+        "first_seen": "2026-11-24T09:55:00",
+        "sample": "upstream timed out"
+      }
+    ],
+    "crash_signals": {
+      "timed out": 7
+    },
+    "metric_context": {
+      "cpu_percent": 88
+    },
+    "related_events": [],
+    "container_id": "case-08",
+    "window_minutes": 10,
+    "generated_at": "2026-11-24T10:00:00",
+    "new_templates": [],
+    "error_count": 7
+  },
+  {
+    "verdict": "oom_kill_confirmed",
+    "confidence": "high",
+    "reasons": [
+      "exitCode=137 die event",
+      "Memory reached 96%",
+      "6 dependency timeouts"
+    ],
+    "top_templates": [
+      {
+        "template": "upstream timed out",
+        "count": 6,
+        "level": "WARN",
+        "template_id": "c0ebfd772165",
+        "first_seen": "2026-11-24T09:55:00",
+        "sample": "upstream timed out"
+      }
+    ],
+    "crash_signals": {
+      "timed out": 6
+    },
+    "metric_context": {
+      "memory_percent": 96
+    },
+    "related_events": [
+      {
+        "action": "die",
+        "timestamp": "2026-11-24T09:58:00",
+        "attributes": {}
+      }
+    ],
+    "container_id": "case-09",
+    "window_minutes": 10,
+    "generated_at": "2026-11-24T10:00:00",
+    "new_templates": [],
+    "error_count": 0
+  },
+  {
+    "verdict": "resource_exhaustion",
+    "confidence": "medium",
+    "reasons": [
+      "too many open files despite low memory usage"
+    ],
+    "top_templates": [
+      {
+        "template": "accept: too many open files",
+        "count": 3,
+        "level": "ERROR",
+        "template_id": "73a31623f74b",
+        "first_seen": "2026-11-24T09:55:00",
+        "sample": "accept: too many open files"
+      }
+    ],
+    "crash_signals": {
+      "too many open files": 3
+    },
+    "metric_context": {
+      "memory_percent": 14
+    },
+    "related_events": [],
+    "container_id": "case-10",
+    "window_minutes": 10,
+    "generated_at": "2026-11-24T10:00:00",
+    "new_templates": [],
+    "error_count": 3
+  }
+]

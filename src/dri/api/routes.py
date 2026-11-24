@@ -51,6 +51,7 @@ agent: Optional[Any] = None         # DRIAgent reference for live counters
 recommender: Optional[Any] = None   # ResourceRecommender
 forecaster: Optional[Any] = None    # MetricsForecaster
 log_analyzer: Optional[Any] = None
+_ai_requests: dict[str, float] = {}
 start_time: float = time.time()
 
 
@@ -67,6 +68,7 @@ def set_dependencies(
     """Inject dependencies into routes."""
     global storage, aggregator, policy_engine, agent, recommender, forecaster
     global log_analyzer
+    _ai_requests.clear()
     log_analyzer = log_an
     storage = s
     aggregator = a
@@ -505,3 +507,26 @@ async def explain_container(container_id: str, window_minutes: int = Query(10, g
         raise HTTPException(503, "Log analysis not enabled")
     metrics = await aggregator.aggregate(container_id) if aggregator else None
     return await log_analyzer.explain(container_id, window_minutes, metrics)
+
+@router.get("/llm/status")
+async def llm_status():
+    service = log_analyzer.root_cause if log_analyzer else None
+    if service:
+        return service.metrics()
+    return dict(enabled=False, status="disabled", model=None, base_url_host=None,
+                queue_depth=0, jobs_done=0, jobs_dropped=0, avg_latency_ms=0)
+
+
+@router.post("/containers/{container_id}/explain/ai", status_code=202)
+async def analyze_with_ai(container_id: str):
+    service = log_analyzer.root_cause if log_analyzer else None
+    if not service or not service.config.enabled:
+        raise HTTPException(503, "Local AI analysis disabled")
+    now = time.monotonic()
+    for cid in [cid for cid, deadline in _ai_requests.items() if deadline <= now]:
+        del _ai_requests[cid]
+    if container_id in _ai_requests:
+        raise HTTPException(429, "Analysis requested within the last 30 seconds")
+    _ai_requests[container_id] = now + 30
+    report = await explain_container(container_id, window_minutes=10)
+    return {"status": service.enqueue(report)}

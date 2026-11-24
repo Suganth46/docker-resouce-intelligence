@@ -11,14 +11,11 @@ WORKDIR /build
 COPY requirements.txt pyproject.toml ./
 COPY src/ ./src/
 
-# Upgrade pip so it resolves manylinux platform tags correctly (pip 24 inside
-# the base image can fail with "from versions: none" on a slow/interrupted
-# PyPI connection — upgrading pip and setting --timeout 120 prevents that).
-# Install numpy first so scipy's dependency resolver finds it immediately.
-RUN pip install --no-cache-dir --timeout 120 --upgrade pip && \
-    pip install --no-cache-dir --timeout 120 "numpy>=1.24.0" && \
-    pip install --no-cache-dir --timeout 120 --user -r requirements.txt && \
-    pip install --no-cache-dir --timeout 120 --user .
+# Keep the entire runtime dependency set in the directory copied below.
+# A build may supply its enterprise/proxy CA bundle as a BuildKit secret.
+RUN --mount=type=secret,id=build_ca \
+    if [ -f /run/secrets/build_ca ]; then export PIP_CERT=/run/secrets/build_ca; fi && \
+    pip install --no-cache-dir --timeout 120 --user -r requirements.txt .
 
 # Runtime stage
 FROM python:3.11-slim
@@ -27,9 +24,7 @@ WORKDIR /app
 
 # Install ca-certificates for HTTPS webhook calls.
 # This layer is cached as long as the Dockerfile doesn't change.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+RUN test -s /etc/ssl/certs/ca-certificates.crt || (apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*)
 
 # Copy Python dependencies (including installed dri package) from builder
 COPY --from=builder /root/.local /root/.local

@@ -212,11 +212,11 @@ The polling interval (5–60s) is adjustable from the dashboard's Settings panel
 
 ## Full Docker Deployment
 
-Run the **entire stack** (agent + dashboard + Prometheus) as containers:
+Run the agent, dashboard, Prometheus and local Ollama service as containers:
 
 ```bash
 cd deployment
-docker-compose up -d --build
+docker compose up -d --build
 ```
 
 | Service | URL |
@@ -228,6 +228,18 @@ docker-compose up -d --build
 Stop everything with `docker-compose down`.
 
 ---
+
+## Local LLM analysis (Ollama)
+
+The container detail page shows the rule-based verdict first. **Analyze with AI** requests an advisory explanation from the local model. The same analysis runs in the background for alerts with a rule-based verdict. Model suggestions are displayed as text. The server sends masked templates, counts, rule reasons, resource readings and event actions to Ollama over the private Compose network. Raw sample lines and event attributes stay out of the prompt. With the default local URL, inference data stays on the host.
+
+The Python agent defaults to AI disabled. Plain Compose starts Ollama and enables analysis in the agent. On first start the model pull can take several minutes. Allow several GB for the image plus roughly 1 GB for the default quantized 1.5B model. Weights persist in the named `ollama-data` volume across container recreations. The agent starts immediately. Ollama becomes healthy when its selected model appears in `ollama list`.
+
+From `deployment/`, copy `.env.example` to `.env`, set `DRI_LLM_MODEL` to select a different model, then run `docker compose up -d`. Set `DRI_LLM_ENABLED=false` to disable analysis in the agent. The Ollama service still follows the Compose startup and download settings. For an NVIDIA host with the container runtime installed, use `docker compose -f docker-compose.yml -f docker-compose.gpu.yml up`.
+
+The global policy excludes names matching `dri-*` through `policy_exclude_names`. DRI still collects their metrics and logs. This keeps the CPU throttle rule from applying its 512 MB memory cap to Ollama or restarting the monitoring stack. Supply custom shell-style patterns or an empty list to include every container. Ollama's own Compose limits are 2 GiB and 2 CPUs and require a Docker daemon that supports cgroups.
+
+See the [benchmark results and selection criteria](docs/log-intelligence.md#local-model-benchmark) for the status of the provisional default.
 
 ## Configuration
 
@@ -337,6 +349,8 @@ By default (`api_key: null`) authentication is off, which keeps local developmen
 | `GET` | `/api/v1/events` | When configured | Docker lifecycle events (paginated, filterable) |
 | `GET` | `/api/v1/policies` | When configured | Active policies |
 | `GET` | `/api/v1/recommendations` | When configured | Right-sized limits per container (cached; `?force=true` to recompute) |
+| `GET` | `/api/v1/llm/status` | When configured | Local model availability and queue statistics |
+| `POST` | `/api/v1/containers/{container_id}/explain/ai` | When configured | Queue an advisory summary (202), once per container every 30 seconds |
 | `GET` | `/api/v1/logs/{container_id}` | When configured | Masked recent lines, filtered by minutes, level and limit |
 | `GET` | `/api/v1/containers/{container_id}/explain` | When configured | Heuristic verdict and supporting evidence for a 1–120 minute window |
 | `GET` | `/api/v1/forecast/<container_id>` | When configured | Usage forecast (cached; `?force=true` to recompute) |

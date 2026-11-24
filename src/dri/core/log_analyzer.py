@@ -12,6 +12,7 @@ from typing import Optional
 from .log_parser import DEFAULT_CRASH, normalize_template, template_id, utcnow
 from ..utils.metrics import AggregatedMetrics
 from .storage_base import StorageBackend
+from .root_cause import LLMSummary
 from .recommender import z_score_anomaly
 
 DEPENDENCIES = {
@@ -37,6 +38,8 @@ class Explanation:
     verdict: str
     confidence: str
     reasons: list[str]
+    llm_summary: Optional[LLMSummary] = None
+    llm_status: str = "disabled"
 
 
 def summary(explanation: Explanation, max_len=300) -> str:
@@ -159,7 +162,9 @@ class LogAnalyzer:
         *,
         warmup_minutes=10,
         storage: Optional[StorageBackend] = None,
+        root_cause=None,
     ):
+        self.root_cause = root_cause
         self.storage = storage
         self._lock = threading.RLock()
         self.evidence_patterns = [
@@ -361,6 +366,8 @@ class LogAnalyzer:
         result.verdict, result.confidence, result.reasons = _verdict(
             result, dependency_lines, stats
         )
+        if self.root_cause:
+            result.llm_summary, result.llm_status = self.root_cause.lookup(result)
         return result
 
 

@@ -14,6 +14,19 @@ container_status_cleanup_minutes: 5
 
 # Docker log collection and policy signals. Patterns are case-insensitive regexes.
 logs:
+  llm:
+    enabled: false
+    provider: ollama
+    base_url: http://ollama:11434
+    model: qwen2.5:1.5b
+    timeout_seconds: 60
+    max_input_chars: 1500
+    max_output_tokens: 200
+    num_ctx: 2048
+    temperature: 0.0
+    cache_minutes: 10
+    queue_size: 20
+    probe_interval_seconds: 30
   warmup_minutes: 10  # Observe each container before flagging new error patterns.
   enabled: true
   retention_hours: 24  # Log volume typically exceeds metrics volume.
@@ -84,6 +97,8 @@ actions:
   restart_grace_period: 30
 
 # Global default policy
+# Shell-style container-name patterns exempt from automatic policy evaluation and actions.
+policy_exclude_names: ["dri-*"]
 global_policy:
   name: "global"
   selector: {}

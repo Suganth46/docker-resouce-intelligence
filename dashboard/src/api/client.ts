@@ -3,7 +3,7 @@
 const BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000';
 const API_KEY = import.meta.env.VITE_API_KEY;
 
-async function get<T>(path: string, params?: Record<string, string | number>): Promise<T> {
+async function request<T>(path: string, params?: Record<string, string | number>, method = 'GET'): Promise<T> {
   const url = new URL(`${BASE}${path}`);
   if (params) {
     Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, String(v)));
@@ -13,6 +13,7 @@ async function get<T>(path: string, params?: Record<string, string | number>): P
     headers['X-Api-Key'] = API_KEY;
   }
   const res = await fetch(url.toString(), {
+    method,
     headers: Object.keys(headers).length > 0 ? headers : undefined,
   });
   if (!res.ok) {
@@ -88,7 +89,29 @@ interface LogTemplate {
   sample: string;
 }
 
+export type LLMState = 'disabled' | 'unavailable' | 'model_missing' | 'pending' | 'ready';
+export interface LLMSummary {
+  root_cause: string;
+  confidence: 'low' | 'medium' | 'high';
+  suggested_actions: string[];
+  evidence_used: string[];
+  model: string;
+  generated_at: string;
+  latency_ms: number;
+}
+export interface LLMStatus {
+  enabled: boolean;
+  status: LLMState;
+  model: string | null;
+  base_url_host: string | null;
+  queue_depth: number;
+  jobs_done: number;
+  jobs_dropped: number;
+  avg_latency_ms: number;
+}
 export interface ExplainData {
+  llm_status: LLMState;
+  llm_summary: LLMSummary | null;
   container_id: string;
   window_minutes: number;
   generated_at: string;
@@ -226,23 +249,26 @@ export interface EventsData {
 // ── API Functions ──────────────────────────────────────────────────────────
 
 export const api = {
+  explainAi: (container_id: string) =>
+    request<{status: LLMState}>(`/api/v1/containers/${encodeURIComponent(container_id)}/explain/ai`, undefined, 'POST'),
+  llmStatus: () => request<LLMStatus>('/api/v1/llm/status'),
   logs: (container_id: string, minutes = 15, level?: string, limit = 200) =>
-    get<LogsData>(`/api/v1/logs/${encodeURIComponent(container_id)}`, { minutes, limit, ...(level ? { level } : {}) }),
+    request<LogsData>(`/api/v1/logs/${encodeURIComponent(container_id)}`, { minutes, limit, ...(level ? { level } : {}) }),
   explain: (container_id: string, window_minutes = 10) =>
-    get<ExplainData>(`/api/v1/containers/${encodeURIComponent(container_id)}/explain`, { window_minutes }),
-  health: () => get<HealthData>('/api/v1/health'),
+    request<ExplainData>(`/api/v1/containers/${encodeURIComponent(container_id)}/explain`, { window_minutes }),
+  health: () => request<HealthData>('/api/v1/health'),
   metrics: (container_id?: string) =>
-    get<MetricsList>('/api/v1/metrics', container_id ? { container_id } : undefined),
+    request<MetricsList>('/api/v1/metrics', container_id ? { container_id } : undefined),
   alerts: (limit = 100, offset = 0) =>
-    get<AlertsData>('/api/v1/alerts', { limit, offset }),
+    request<AlertsData>('/api/v1/alerts', { limit, offset }),
   actions: (limit = 100, offset = 0) =>
-    get<ActionsData>('/api/v1/actions/history', { limit, offset }),
+    request<ActionsData>('/api/v1/actions/history', { limit, offset }),
   events: (container_id?: string, limit = 100, offset = 0) =>
-    get<EventsData>('/api/v1/events', { ...(container_id ? { container_id } : {}), limit, offset }),
+    request<EventsData>('/api/v1/events', { ...(container_id ? { container_id } : {}), limit, offset }),
   recommendations: (lookback_days = 7, safety_margin = 0.2) =>
-    get<RecommendationsData>('/api/v1/recommendations', { lookback_days, safety_margin }),
+    request<RecommendationsData>('/api/v1/recommendations', { lookback_days, safety_margin }),
   forecast: (container_id: string, horizon_hours = 24, metric = 'memory_percent') =>
-    get<ForecastData>(`/api/v1/forecast/${container_id}`, { horizon_hours, metric }),
+    request<ForecastData>(`/api/v1/forecast/${container_id}`, { horizon_hours, metric }),
   policies: () =>
-    get<PoliciesData>('/api/v1/policies'),
+    request<PoliciesData>('/api/v1/policies'),
 };

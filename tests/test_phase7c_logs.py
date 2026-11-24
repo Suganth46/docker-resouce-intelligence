@@ -158,6 +158,8 @@ async def test_http(monkeypatch):
                 "new_templates",
                 "crash_signals",
                 "related_events",
+                "llm_summary",
+                "llm_status",
                 "metric_context",
                 "verdict",
                 "confidence",

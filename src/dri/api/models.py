@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Literal
+from ..core.root_cause import LLMSummary
 from pydantic import BaseModel, Field
 
 
@@ -274,3 +275,5 @@ class ExplanationResponse(BaseModel):
     verdict: str
     confidence: Literal["low", "medium", "high"]
     reasons: List[str]
+    llm_summary: Optional[LLMSummary] = None
+    llm_status: str = "disabled"

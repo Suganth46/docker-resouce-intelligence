@@ -8,6 +8,8 @@ from typing import Optional
 import docker
 
 from .config import DRIConfig, load_config, watch_config, StorageConfig
+from .core.root_cause import RootCauseService
+from .core.llm_client import OllamaClient
 from .core.log_analyzer import LogAnalyzer, summary
 from .core.log_collector import DockerLogCollector
 from .core.collector import DockerStatsCollector
@@ -73,6 +75,7 @@ class DRIAgent:
         self.aggregator: Optional[MetricsAggregator] = None
         self.policy_engine: Optional[PolicyEngine] = None
         self.log_collector: Optional[DockerLogCollector] = None
+        self.root_cause: Optional[RootCauseService] = None
         self.log_analyzer: Optional[LogAnalyzer] = None
         self.event_listener: Optional[DockerEventListener] = None
         self.api_server: Optional[DRIAPIServer] = None
@@ -94,6 +97,7 @@ class DRIAgent:
         # Per-(container_id, rule_key) action cooldown to prevent repeating
         # the same throttle/isolate/restart/webhook every policy-check tick.
         # Key: (container_id, alert_type, metric), Value: last-fired timestamp.
+        self._excluded_action_ids = set()
         self._action_cooldowns: dict[tuple, datetime] = {}
         self._ACTION_COOLDOWN_SECONDS: int = 120  # 2 minutes between repeats
 
@@ -116,9 +120,16 @@ class DRIAgent:
             await self.storage.init()
 
             if self.config.logs.enabled:
+                llm = self.config.logs.llm
+                if llm.enabled:
+                    client = OllamaClient(llm.base_url, llm.model, llm.timeout_seconds,
+                                          {"num_ctx": llm.num_ctx, "num_predict": llm.max_output_tokens,
+                                           "temperature": llm.temperature},
+                                          probe_interval_seconds=llm.probe_interval_seconds)
+                    self.root_cause = RootCauseService(client, None, llm)
                 self.log_analyzer = LogAnalyzer(
                     self.config.logs.crash_patterns, warmup_minutes=self.config.logs.warmup_minutes,
-                    storage=self.storage,
+                    storage=self.storage, root_cause=self.root_cause,
                 )
                 self.log_collector = DockerLogCollector(
                     self.docker_client, self.config.logs, self.storage, self.log_analyzer.ingest
@@ -185,6 +196,8 @@ class DRIAgent:
                 if explanation.verdict != "none":
                     evidence = " | evidence: " + summary(explanation)
                     alert.message = alert.message[:500 - len(evidence)] + evidence
+                    if self.root_cause:
+                        self.root_cause.enqueue(explanation)
             except Exception as exc:
                 logger_module.warning("Alert enrichment unavailable", container_id=alert.container_id, error=type(exc).__name__)
 
@@ -333,6 +346,13 @@ class DRIAgent:
 
     async def _handle_alert_action(self, alert) -> None:
         """Handle actions triggered by alerts."""
+        if alert.alert_type in ("throttle", "isolate", "restart") and self.config.excludes_name(
+            alert.container_name
+        ):  # policy_exclude_names
+            if alert.container_id not in self._excluded_action_ids:
+                self._excluded_action_ids.add(alert.container_id)
+                logger_module.warning(f"Refusing {alert.alert_type} for excluded container {alert.container_name}")
+            return
         try:
             # ----------------------------------------------------------------
             # Per-(container, alert_type, metric) cooldown — prevent the same
@@ -544,6 +564,8 @@ class DRIAgent:
         def signal_handler(sig, frame):
             logger_module.info(f"Received signal {sig}, shutting down...")
             self.running = False
+            if self.root_cause:
+                asyncio.get_running_loop().call_soon(self.root_cause.stop)
             if self.log_collector:
                 self.log_collector.stop()
 
@@ -561,6 +583,8 @@ class DRIAgent:
                 self._container_status_loop(),
             ]
 
+            if self.root_cause:
+                tasks.append(self.root_cause.run())
             if self.log_collector:
                 tasks.append(self.log_collector.run())
 
@@ -583,6 +607,8 @@ class DRIAgent:
         logger_module.info("Shutting down DRI agent...")
 
         try:
+            if self.root_cause:
+                await self.root_cause.close()
             if self.collector:
                 self.collector.stop()
                 await self.collector.disconnect()

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { api } from '../api/client';
 import { usePolling } from '../hooks/usePolling';
-import { IconLog } from './icons';
+import { IconLog, IconRun } from './icons';
 
 type Props = { containerId: string };
 
@@ -16,7 +16,25 @@ function RecentErrors({ containerId }: Props) {
 }
 
 export function LogEvidence({ containerId }: Props) {
-  const { data, error } = usePolling(() => api.explain(containerId, 10), 30_000, [containerId]);
+  const [pending, setPending] = useState(false);
+  const [aiError, setAiError] = useState('');
+  const { data, error, refresh } = usePolling(async () => {
+    const report = await api.explain(containerId, 10);
+    setPending(report.llm_status === 'pending');
+    return report;
+  }, pending ? 5_000 : 30_000, [containerId]);
+
+  async function analyze() {
+    setAiError('');
+    try {
+      const response = await api.explainAi(containerId);
+      setPending(response.status === 'pending');
+      if (response.status === 'unavailable') setAiError('Local analysis unavailable. Try again later.');
+      refresh();
+    } catch (cause) {
+      setAiError(cause instanceof Error ? cause.message : 'Analysis request failed');
+    }
+  }
   const [expanded, setExpanded] = useState(false);
   const badge = data?.verdict === 'none' ? 'badge-neutral'
     : ['oom_kill_confirmed', 'crash_loop'].includes(data?.verdict ?? '') ? 'badge-critical' : 'badge-warning';
@@ -26,6 +44,19 @@ export function LogEvidence({ containerId }: Props) {
     {error ? <p role="status">{error}</p> : !data ? <p>Loading log evidence…</p> : <>
       <span className={`badge ${badge}`}>{data.verdict.replace(/_/g, ' ')} · {data.confidence} confidence</span>
       <ul>{data.reasons.map(reason => <li key={reason}>{reason}</li>)}</ul>
+      {data.llm_status !== 'disabled' && <section aria-label="AI analysis">
+        <h4>AI analysis</h4>
+        {data.llm_status === 'model_missing' || data.llm_status === 'unavailable'
+          ? <p style={{ color: 'var(--muted)' }}>Local model not ready</p>
+          : pending || data.llm_status === 'pending'
+          ? <div role="status"><span className="spinner" style={{ display: 'inline-block' }} /> Analyzing…</div>
+          : data.llm_summary ? <>
+            <p>{data.llm_summary.root_cause} <span className="badge badge-neutral">{data.llm_summary.confidence} confidence</span></p>
+            <ul>{data.llm_summary.suggested_actions.map((action, i) => <li key={i}>{action}</li>)}</ul>
+            <small>AI-generated, advisory · {data.llm_summary.model} · <code>{data.llm_summary.latency_ms} ms</code></small>
+          </> : <button className="badge badge-info" onClick={analyze}><IconRun /> Analyze with AI</button>}
+        {aiError && <p role="status">{aiError}</p>}
+      </section>}
       {data.top_templates.length ? <div style={{ overflowX: 'auto' }}>
         <table className="data-table">
           <thead><tr><th>Template</th><th>Count</th><th>Level</th><th>First seen (UTC)</th></tr></thead>

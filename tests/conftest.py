@@ -15,3 +15,4 @@ def pytest_configure(config: pytest.Config) -> None:
         "timescale: marks integration tests that require a live TimescaleDB "
         "instance (skipped unless TIMESCALE_TEST_URL env var is set).",
     )
+    config.addinivalue_line("markers", "ollama: requires a local Ollama server and a pulled model")

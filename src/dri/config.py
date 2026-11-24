@@ -1,9 +1,11 @@
 """Configuration loading and validation for DRI agent."""
 
 import asyncio
+from fnmatch import fnmatchcase
+from urllib.parse import urlsplit
 from pathlib import Path
-from typing import Dict, Any, Optional, List
-from pydantic import BaseModel, Field, field_validator
+from typing import Dict, Any, Optional, List, Literal
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 import yaml
 import os
 import re
@@ -102,7 +104,31 @@ class APIConfig(BaseModel):
     api_key: Optional[str] = None
 
 
+class LLMConfig(BaseModel):
+    enabled: bool = False
+    provider: Literal["ollama"] = "ollama"
+    base_url: str = "http://ollama:11434"
+    model: str = Field("qwen2.5:1.5b", min_length=1)
+    timeout_seconds: int = Field(60, gt=0)
+    max_input_chars: int = Field(1500, gt=0)
+    max_output_tokens: int = Field(200, gt=0)
+    num_ctx: int = Field(2048, gt=0)
+    temperature: float = Field(0.0, ge=0)
+    cache_minutes: int = Field(10, gt=0)
+    queue_size: int = Field(20, gt=0)
+    probe_interval_seconds: int = Field(30, gt=0)
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_base_url(cls, value: str) -> str:
+        parsed = urlsplit(value)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            raise ValueError("base_url must be an HTTP(S) URL with a host")
+        return value
+
+
 class LogConfig(BaseModel):
+    llm: LLMConfig = Field(default_factory=LLMConfig)
     warmup_minutes: int = Field(10, ge=0)
     enabled: bool = True
     retention_hours: int = Field(24, gt=0)
@@ -128,6 +154,7 @@ class LogConfig(BaseModel):
 
 class DRIConfig(BaseModel):
     """Main DRI configuration."""
+    model_config = ConfigDict(hide_input_in_errors=True)
     log_level: str = "INFO"
     log_json: bool = False
     log_file: Optional[str] = None
@@ -158,6 +185,11 @@ class DRIConfig(BaseModel):
     alert_renotify_seconds: int = 300
 
     # Global and per-container policies
+    policy_exclude_names: List[str] = Field(default_factory=lambda: ["dri-*"])
+
+    def excludes_name(self, name: str) -> bool:
+        return any(fnmatchcase(name, pattern) for pattern in self.policy_exclude_names)
+
     global_policy: ContainerPolicy = Field(default_factory=lambda: ContainerPolicy(name="global"))
     container_policies: List[ContainerPolicy] = Field(default_factory=list)
 
@@ -184,20 +216,20 @@ def load_config(config_path: Optional[str] = None) -> DRIConfig:
 
     config_file = Path(config_path)
 
-    if not config_file.exists():
-        logger.warning(f"Config file not found: {config_file}, using defaults")
-        return DRIConfig()
-
-    logger.info(f"Loading config from {config_file}")
-
-    try:
-        with open(config_file, "r") as f:
+    config_data = {}
+    if config_file.exists():
+        logger.info(f"Loading config from {config_file}")
+        with config_file.open() as f:
             config_data = yaml.safe_load(f) or {}
-    except Exception as e:
-        logger.error(f"Failed to load config: {e}")
-        raise
+    else:
+        logger.warning(f"Config file not found: {config_file}, using defaults")
 
     try:
+        for field in ("enabled", "base_url", "model"):
+            env_name = "DRI_LLM_" + field.upper()
+            if env_name in os.environ:
+                config_data.setdefault("logs", {}).setdefault("llm", {})[field] = os.environ[env_name]
+                logger.info(f"Overriding logs.llm.{field} from {env_name}")
         config = DRIConfig(**config_data)
         logger.info(f"Config loaded successfully")
         return config
