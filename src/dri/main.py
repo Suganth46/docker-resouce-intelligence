@@ -139,6 +139,7 @@ class DRIAgent:
                     self.docker_client, self.config.logs, self.storage, self.log_analyzer.ingest
                 )
 
+                self.log_analyzer.collection_info = self.log_collector.collection_info
                 self.log_analyzer.collection_state = self.log_collector.collection_state
 
             # Aggregator

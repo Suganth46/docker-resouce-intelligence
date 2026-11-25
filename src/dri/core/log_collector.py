@@ -48,6 +48,8 @@ class DockerLogCollector:
         # Bound both queued lines and callbacks waiting on the event loop.
         self.handoff = threading.Lock()
         self.slots = threading.BoundedSemaphore(capacity)
+        self.status_lock = threading.Lock()
+        self._records = {}
         self.threads = {}
         self.unsupported = set()
         self.cursors = {}
@@ -64,11 +66,33 @@ class DockerLogCollector:
         self._running = False
         self.lines_ingested = self.lines_dropped = 0
 
+    def _update_status(self, cid, *, state=None, timestamp=None, dropped=False):
+        with self.status_lock:
+            row = self._records.setdefault(cid, dict(state="ended", lines_ingested=0,
+                                                      last_line_ts=None, dropped=0))
+            if state:
+                row["state"] = state
+            if timestamp is not None:
+                row["lines_ingested"] += 1
+                row["last_line_ts"] = max(timestamp, row["last_line_ts"] or timestamp)
+            if dropped:
+                row["dropped"] += 1
+
+    def collection_info(self, cid):
+        with self.status_lock:
+            return self._records.get(cid, {}).copy()
+
     def collection_state(self, cid):
-        if cid in self.unsupported:
-            return "unsupported_driver"
-        thread = self.threads.get(cid)
-        return "following" if thread and thread.is_alive() else "not_following"
+        state = self.collection_info(cid).get("state")
+        return state if state in ("following", "unsupported_driver") else "not_following"
+
+    def status(self):
+        with self.status_lock:
+            rows = {cid: row.copy() for cid, row in self._records.items()}
+        return dict(containers=rows, totals=dict(
+            following=sum(r["state"] == "following" for r in rows.values()),
+            lines_ingested=sum(r["lines_ingested"] for r in rows.values()),
+            dropped=sum(r["dropped"] for r in rows.values())))
 
     @property
     def containers_followed(self):
@@ -80,6 +104,7 @@ class DockerLogCollector:
                 self.queue.put_nowait((cid, name, line))
                 return
             except asyncio.QueueFull:
+                self._update_status(cid, dropped=True)
                 self.lines_dropped += 1
         self.slots.release()
 
@@ -89,6 +114,7 @@ class DockerLogCollector:
         resume = self.cursors.get(cid)
         second, skip = resume or (int(time.time()), 0)
         try:
+            self._update_status(cid, state="following")
             stream = container.logs(stream=True, follow=True, timestamps=True, since=second)
             for raw in stream:
                 if not self._running:
@@ -124,6 +150,9 @@ class DockerLogCollector:
             if self._running:
                 logger.warning("Lost Docker log stream for %s", cid)
 
+        finally:
+            self._update_status(cid, state="unsupported_driver" if cid in self.unsupported else "ended")
+
     async def _discover_loop(self):
         loop = asyncio.get_running_loop()
         while self._running:
@@ -131,13 +160,13 @@ class DockerLogCollector:
                 containers = await loop.run_in_executor(None, self.client.containers.list)
                 self.threads = {cid: t for cid, t in self.threads.items() if t.is_alive()}
                 for container in containers:
-                    if (
-                        not self._running
-                        or len(self.threads) >= self.config.max_followed_containers
-                    ):
+                    if not self._running:
                         break
                     cid = container.id[:12]
                     if cid in self.threads or cid in self.unsupported:
+                        continue
+                    if len(self.threads) >= self.config.max_followed_containers:
+                        self._update_status(cid, state="skipped_limit")
                         continue
                     thread = threading.Thread(
                         target=self._follow, args=(container, cid, loop), daemon=True
@@ -176,6 +205,7 @@ class DockerLogCollector:
         remaining, previous = self.tokens.get(cid, (rate, now))
         remaining = min(rate, remaining + (now - previous) * rate)
         if remaining < 1 and not protected:
+            self._update_status(cid, dropped=True)
             self.drops[cid] += 1
             self.lines_dropped += 1
         else:
@@ -183,6 +213,7 @@ class DockerLogCollector:
             self._record(
                 cid, ts, level, truncate(mask_sensitive(message), self.config.max_line_length)
             )
+            self._update_status(cid, timestamp=ts)
             self.lines_ingested += 1
         self.tokens[cid] = remaining, now
 

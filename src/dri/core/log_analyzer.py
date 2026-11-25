@@ -176,6 +176,7 @@ class LogAnalyzer:
         surge_warmup_minutes=30,
         policy_exclude_names=("dri-*",),
     ):
+        self.collection_info = None
         self.collection_state = None
         self.memory_growth_pct = memory_growth_pct
         self.cpu_saturation_pct = cpu_saturation_pct
@@ -441,6 +442,8 @@ class LogAnalyzer:
         result.coverage = dict(logs_status="no_output" if state == "following" and not lines else state,
                                log_lines_in_window=lines, events_in_window=len(events),
                                metrics_available=aggregated is not None, window_minutes=window_minutes)
+        if self.collection_info:
+            result.coverage["collection"] = self.collection_info(container_id)
         if getattr(aggregated, "is_anomaly", False):
             result.active_anomaly = dict(type=aggregated.anomaly_type, detail=aggregated.anomaly_detail)
         result.verdict, result.confidence, result.reasons = _verdict(

@@ -208,6 +208,8 @@ async def test_reconnect_and_unsupported_driver():
 
     collector_storage = AsyncMock()
     stamp = utcnow().isoformat().encode() + b"Z "
+    silent = Mock(id="silent")
+    silent.logs.return_value = iter(())
     normal = Mock(id="reader")
     normal.name = "reader"
     normal.logs.side_effect = [
@@ -217,7 +219,7 @@ async def test_reconnect_and_unsupported_driver():
     unsupported = Mock(id="other")
     unsupported.logs.side_effect = APIError("configured logging driver does not support reading")
     client = Mock()
-    client.containers.list.return_value = [normal, unsupported]
+    client.containers.list.return_value = [normal, silent, unsupported]
     entries = []
     collector = DockerLogCollector(client, LogConfig(), collector_storage, entries.append)
     rounds = 0
@@ -237,3 +239,9 @@ async def test_reconnect_and_unsupported_driver():
     await collector.close()
     assert [entry["message"] for entry in entries] == ["INFO first", "INFO second"]
     assert unsupported.logs.call_count == 1
+    status = collector.status()
+    assert status["containers"]["other"]["state"] == "unsupported_driver"
+    assert status["containers"]["silent"] == dict(state="ended", lines_ingested=0, last_line_ts=None, dropped=0)
+    assert status["containers"]["reader"]["lines_ingested"] == 2
+    assert status["containers"]["reader"]["last_line_ts"] is not None
+    assert status["totals"]["lines_ingested"] == 2

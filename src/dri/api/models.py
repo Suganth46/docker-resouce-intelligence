@@ -190,6 +190,8 @@ class RecommendationResponse(BaseModel):
 class RecommendationsListResponse(BaseModel):
     """List of per-container resource recommendations."""
     timestamp: datetime
+    insufficient: List["InsufficientDataResponse"] = Field(default_factory=list)
+    pending: List[str] = Field(default_factory=list)
     recommendations: List[RecommendationResponse]
     total_count: int
 
@@ -258,6 +260,7 @@ class RelatedEventResponse(BaseModel):
 
 
 class EvidenceCoverage(BaseModel):
+    collection: Optional[dict] = None
     logs_status: Literal["following", "no_output", "not_following", "unsupported_driver", "disabled"]
     log_lines_in_window: int
     events_in_window: int

@@ -367,33 +367,24 @@ async def get_recommendations(
         # ----------------------------------------------------------------
         # Cache-first path (default)
         # ----------------------------------------------------------------
-        if not force:
-            cached = await storage.get_all_recommendation_caches()
-            if cached:
-                recs = []
-                for payload in cached:
-                    try:
-                        recs.append(RecommendationResponse(**payload))
-                    except Exception as e:
-                        # Skip malformed cache entries gracefully
-                        pass
-                return RecommendationsListResponse(
-                    timestamp=datetime.now(timezone.utc),
-                    recommendations=recs,
-                    total_count=len(recs),
-                )
-
-        # ----------------------------------------------------------------
-        # Synchronous recompute path (?force=true or empty cache)
-        # ----------------------------------------------------------------
-        if not aggregator:
-            raise HTTPException(status_code=503, detail="Aggregator not initialized")
-
-        container_ids = list(aggregator._windows.keys())
-
         from ..core.recommender import Recommendation, InsufficientDataResult
 
         recs = []
+        if not force:
+            for payload in await storage.get_all_recommendation_caches():
+                try:
+                    recs.append(RecommendationResponse(**payload))
+                except ValueError:
+                    continue
+        if not aggregator and not recs:
+            raise HTTPException(status_code=503, detail="Aggregator not initialized")
+        known = {row.container_id for row in recs}
+        missing = set(aggregator._windows if aggregator else ()) - known
+        worker = getattr(getattr(agent, "api_server", None), "cache_worker", None)
+        # A partial cache must not hide a new container until the next hourly refresh.
+        pending = missing.intersection(getattr(worker, "computing", ())) if not force else set()
+        container_ids = sorted(missing - pending)
+        insufficient = []
         for cid in container_ids:
             window = aggregator._windows.get(cid)
             cname = window[-1].container_name if window else ""
@@ -406,10 +397,14 @@ async def get_recommendations(
             if isinstance(result, Recommendation):
                 payload = result.to_dict()
                 recs.append(RecommendationResponse(**payload))
+            elif isinstance(result, InsufficientDataResult):
+                insufficient.append(result.to_dict())
 
         return RecommendationsListResponse(
             timestamp=datetime.now(timezone.utc),
             recommendations=recs,
+            insufficient=insufficient,
+            pending=sorted(pending),
             total_count=len(recs),
         )
 
@@ -486,6 +481,14 @@ async def get_forecast(
             )
 
         return ForecastResponse(**result.to_dict())
+
+
+@router.get("/logs/status")
+async def log_collection_status():
+    collector = getattr(agent, "log_collector", None)
+    if collector is None:
+        return dict(enabled=False, containers={}, totals=dict(following=0, lines_ingested=0, dropped=0))
+    return dict(enabled=True, **collector.status())
 
 
 @router.get("/logs/{container_id}", response_model=LogsResponse)

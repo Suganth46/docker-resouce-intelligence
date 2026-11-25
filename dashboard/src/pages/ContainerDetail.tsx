@@ -70,7 +70,8 @@ export default function ContainerDetail({ container, onClose }: ContainerDetailP
   const [forecastError, setForecastError] = useState<string | null>(null);
 
   // Recommendation: fetched from the list and filtered client-side by container_id
-  const { data: recData } = usePolling(() => api.recommendations(), 60_000);
+  const { data: recData, error: recError } = usePolling(() => api.recommendations(), 60_000);
+  const insufficient = recData?.insufficient?.find(row => row.container_id === container.container_id);
   const rec: Recommendation | undefined = recData?.recommendations.find(
     r => r.container_id === container.container_id,
   );
@@ -262,7 +263,9 @@ export default function ContainerDetail({ container, onClose }: ContainerDetailP
           </div>
         ) : (
           <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 24, padding: '12px 0' }}>
-            No recommendation available — need at least 10 historical samples.
+            {recError ?? (insufficient ? `Need ${Math.max(0, insufficient.min_samples_required - insufficient.samples_available)} more samples (have ${insufficient.samples_available}).`
+              : !recData ? 'Loading recommendation…' : recData.pending?.includes(container.container_id)
+              ? 'Recommendation is being computed (first run takes up to a minute).' : 'No recommendation reported.')}
           </div>
         )}
 

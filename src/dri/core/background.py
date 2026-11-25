@@ -63,6 +63,7 @@ class RecommendationCacheWorker:
         self.recommender = recommender
         self.forecaster = forecaster
         self.interval_seconds = interval_seconds
+        self.computing = frozenset()
         self._running = False
         self._task: Optional[asyncio.Task] = None
 
@@ -76,13 +77,15 @@ class RecommendationCacheWorker:
         # Run immediately on startup, then wait for the interval.
         while self._running:
             try:
-                await self._refresh_all()
+                produced = await self._refresh_all()
             except Exception as e:
+                produced = 0
                 logger.error(f"Cache refresh error: {e}")
+            self.computing = frozenset()
             if not self._running:
                 break
             try:
-                await asyncio.sleep(self.interval_seconds)
+                await asyncio.sleep(self.interval_seconds if produced else min(60, self.interval_seconds))
             except asyncio.CancelledError:
                 break
 
@@ -92,15 +95,18 @@ class RecommendationCacheWorker:
         """Signal the worker to stop after the current refresh completes."""
         self._running = False
 
-    async def _refresh_all(self) -> None:
+    async def _refresh_all(self) -> int:
         """Recompute recommendations and forecasts for all known containers."""
         container_ids = list(self.aggregator._windows.keys())
         if not container_ids:
             logger.debug("No containers in aggregator window — skipping cache refresh")
-            return
+            self.computing = frozenset()
+            return 0
 
         logger.info(f"Refreshing cache for {len(container_ids)} container(s)")
-        computed_at = datetime.now(timezone.utc)
+        produced = 0
+        self.computing = frozenset(container_ids)
+        computed_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
         for cid in container_ids:
             window = self.aggregator._windows.get(cid)
@@ -120,6 +126,7 @@ class RecommendationCacheWorker:
                         payload=result.to_dict(),
                         computed_at=computed_at,
                     )
+                    produced += 1
             except Exception as e:
                 logger.warning(f"Recommendation cache refresh failed for {cid}: {e}")
 
@@ -149,4 +156,6 @@ class RecommendationCacheWorker:
                                 f"{cid}/{metric}/{horizon}h: {e}"
                             )
 
+        self.computing = frozenset()
         logger.info(f"Cache refresh complete for {len(container_ids)} container(s)")
+        return produced

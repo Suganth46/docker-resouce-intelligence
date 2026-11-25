@@ -44,6 +44,10 @@ export function LogEvidence({ containerId }: Props) {
     <div className="section-header"><h3 className="section-title"><IconLog /> Log Evidence</h3></div>
     {error ? <p role="status">{error}</p> : !data ? <p>Loading log evidence…</p> : <>
       <p>{describeEvidenceState(data)}</p>
+      <small style={{ color: 'var(--text-muted)' }}>
+        Log collection: {(data.coverage.collection?.state ?? data.coverage.logs_status).replace(/_/g, ' ')}
+        {data.coverage.collection?.last_line_ts && ` · last line ${data.coverage.collection.last_line_ts.slice(11, 19)} UTC`}
+      </small>
       <div>{Object.entries(data.metric_context).filter(([, value]) => value != null).map(([key, value]) =>
         <span key={key} className="badge badge-neutral">{key.replace(/_/g, ' ')} <code>{value?.toFixed(1)}{key.includes('growth') ? '%/min' : '%'}</code></span>
       )}</div>
