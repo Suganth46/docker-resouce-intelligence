@@ -501,8 +501,3 @@ Ideas and contributions are very welcome.
 MIT License. See [LICENSE](LICENSE) for details.
 
 ---
-
-## Links
-
-- **Issues**: https://github.com/murali2277/docker-resouce-intelligence/issues
-- **Discussions**: https://github.com/murali2277/docker-resouce-intelligence/discussions
