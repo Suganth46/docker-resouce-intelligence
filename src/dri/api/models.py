@@ -165,6 +165,10 @@ class RecommendationResponse(BaseModel):
     lookback_actual_days: float = Field(
         description="Actual span of available data in days"
     )
+    observation_minutes: Optional[float] = Field(
+        None,
+        description="Actual observation span in minutes",
+    )
     safety_margin: float
     data_completeness: Optional[str] = Field(
         None,
@@ -178,6 +182,15 @@ class RecommendationResponse(BaseModel):
     # Memory anomalies
     is_memory_leak: bool = False
     memory_leak_slope_pct_per_hour: float = 0.0
+
+    # Phase 7E: trend confidence evidence (optional — absent in legacy payloads)
+    trend_evidence: Optional[dict] = Field(
+        None,
+        description=(
+            "Phase 7E trend confidence evidence bundle. "
+            "None in legacy cached payloads — render 'Trend evidence unavailable'."
+        ),
+    )
 
     # Idle / scale-to-zero signal (merged from ScaleAction)
     is_idle: bool = False

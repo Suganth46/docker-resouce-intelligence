@@ -49,7 +49,7 @@ export function LogEvidence({ containerId }: Props) {
         {data.coverage.collection?.last_line_ts && ` · last line ${data.coverage.collection.last_line_ts.slice(11, 19)} UTC`}
       </small>
       <div>{Object.entries(data.metric_context).filter(([, value]) => value != null).map(([key, value]) =>
-        <span key={key} className="badge badge-neutral">{key.replace(/_/g, ' ')} <code>{value?.toFixed(1)}{key.includes('growth') ? '%/min' : '%'}</code></span>
+        <span key={key} className="badge badge-neutral">{key.replace(/_/g, ' ')} <code>{value?.toFixed(key.includes('growth') ? 2 : 1)}{key.includes('growth') ? '%/min' : '%'}</code></span>
       )}</div>
       <span className={`badge ${badge}`}>Heuristic · {data.verdict.replace(/_/g, ' ')} · {data.confidence} confidence</span>
       <ul>{data.reasons.map(reason => <li key={reason}>{reason}</li>)}</ul>

@@ -7,7 +7,7 @@ import {
 import { api, type ContainerMetrics, type Recommendation, type ForecastData } from '../api/client';
 import { Spinner, MetricBar } from '../components/MetricsCard';
 import { usePolling } from '../hooks/usePolling';
-import { fmtBytes } from '../utils/format';
+import { fmtBytes, fmtCoverage, trendBadgeClass } from '../utils/format';
 import {
   IconAnomaly, IconCritical, IconTrendUp, IconCheck, IconIdle, IconClose,
 } from '../components/icons';
@@ -240,13 +240,49 @@ export default function ContainerDetail({ container, onClose }: ContainerDetailP
               </div>
               <div>
                 <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>Memory Trend</div>
-                {rec.is_memory_leak ? (
-                  <span className="badge badge-critical">
-                    <IconTrendUp size={11} /> Leak +{rec.memory_leak_slope_pct_per_hour.toFixed(2)}%/hr
-                  </span>
-                ) : (
-                  <span className="badge badge-success"><IconCheck size={11} /> Stable</span>
-                )}
+                {(() => {
+                  const ev = rec.trend_evidence;
+                  if (ev === undefined || ev === null) {
+                    return (
+                      <div>
+                        <span className="badge badge-neutral">Trend evidence unavailable</span>
+                        {rec.memory_leak_slope_pct_per_hour !== 0 && (
+                          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                            {rec.memory_leak_slope_pct_per_hour >= 0 ? '+' : ''}
+                            {rec.memory_leak_slope_pct_per_hour.toFixed(2)}%/hr (cached)
+                          </div>
+                        )}
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+                          Awaiting recompute
+                        </div>
+                      </div>
+                    );
+                  }
+                  const label = ev.trend_label;
+                  const badgeClass = trendBadgeClass(label);
+                  const slopeHr = ev.slope_pct_per_hour ?? rec.memory_leak_slope_pct_per_hour;
+                  const showSlope = label !== 'Insufficient data' && label !== 'Trend evidence unavailable';
+                  return (
+                    <div>
+                      <span className={`badge ${badgeClass}`}>
+                        {(label === 'Suspected memory leak' || label === 'Memory rising · early observation') &&
+                          <IconTrendUp size={11} />}
+                        {label === 'Memory stable' && <IconCheck size={11} />}
+                        {' '}{label}
+                      </span>
+                      {showSlope && (
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                          {slopeHr >= 0 ? '+' : ''}{slopeHr.toFixed(2)}%/hr
+                        </div>
+                      )}
+                      {ev.evidence_note && (
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+                          {ev.evidence_note}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
                 {rec.is_idle && (
                   <div style={{ marginTop: 6 }}>
                     <span className="badge badge-neutral"><IconIdle size={11} /> Idle — {rec.idle_recommendation}</span>
@@ -254,12 +290,20 @@ export default function ContainerDetail({ container, onClose }: ContainerDetailP
                 )}
               </div>
             </div>
-            {rec.data_completeness && (
-              <div style={{ marginTop: 12, fontSize: 12, color: 'var(--text-muted)' }}>
-                Data: {rec.data_completeness}
-                {rec.computed_at && ` · computed ${new Date(rec.computed_at).toLocaleTimeString()}`}
-              </div>
-            )}
+            {/* Coverage / freshness line */}
+            <div style={{ marginTop: 12, fontSize: 12, color: 'var(--text-muted)' }}>
+              <span>{fmtCoverage(rec)}</span>
+              {rec.computed_at ? (
+                <span>
+                  {' · '}Recommendation cached at {new Date(rec.computed_at).toLocaleTimeString()}
+                  {' · '}Latest live metric at {new Date(container.timestamp).toLocaleTimeString()}
+                </span>
+              ) : (
+                <span>
+                  {' · '}Computed live · Latest live metric at {new Date(container.timestamp).toLocaleTimeString()}
+                </span>
+              )}
+            </div>
           </div>
         ) : (
           <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 24, padding: '12px 0' }}>

@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { api, type Recommendation } from '../api/client';
+import { api, type Recommendation, type TrendEvidence } from '../api/client';
 import { usePolling } from '../hooks/usePolling';
 import { usePollingInterval } from '../hooks/PollingContext';
 import { Spinner, ErrorBanner } from '../components/MetricsCard';
-import { fmtBytes } from '../utils/format';
+import { fmtBytes, fmtCoverage, trendBadgeClass } from '../utils/format';
 import {
   IconTrendUp, IconCheck, IconIdle, IconEmptyBox, IconRestart, IconClose,
 } from '../components/icons';
@@ -11,6 +11,53 @@ import {
 function confidenceBadge(tier: string): string {
   const m: Record<string, string> = { high: 'badge-success', medium: 'badge-info', low: 'badge-warning' };
   return m[tier] ?? 'badge-neutral';
+}
+
+/** Render the memory trend cell using Phase 7E evidence when available. */
+function MemoryTrendCell({ rec }: { rec: Recommendation }) {
+  const ev: TrendEvidence | null | undefined = rec.trend_evidence;
+
+  // Legacy cached payload lacking Phase 7E evidence
+  if (ev === undefined || ev === null) {
+    return (
+      <div>
+        <span className="badge badge-neutral">Trend evidence unavailable</span>
+        {rec.memory_leak_slope_pct_per_hour !== 0 && (
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+            {rec.memory_leak_slope_pct_per_hour >= 0 ? '+' : ''}
+            {rec.memory_leak_slope_pct_per_hour.toFixed(2)}%/hr (cached)
+          </div>
+        )}
+        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1 }}>
+          Awaiting recompute
+        </div>
+      </div>
+    );
+  }
+
+  const label = ev.trend_label;
+  const badgeClass = trendBadgeClass(label);
+  const slopeHr = ev.slope_pct_per_hour ?? rec.memory_leak_slope_pct_per_hour;
+  const showSlope = label !== 'Insufficient data' && label !== 'Trend evidence unavailable';
+
+  return (
+    <div>
+      <span className={`badge ${badgeClass}`}>
+        {(label === 'Suspected memory leak' || label === 'Memory rising · early observation') &&
+          <IconTrendUp size={11} />}
+        {label === 'Memory stable' && <IconCheck size={11} />}
+        {' '}{label}
+      </span>
+      {showSlope && (
+        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+          {slopeHr >= 0 ? '+' : ''}{slopeHr.toFixed(2)}%/hr
+        </div>
+      )}
+      {ev.evidence_note && (
+        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1 }}>{ev.evidence_note}</div>
+      )}
+    </div>
+  );
 }
 
 function RecRow({ rec }: { rec: Recommendation }) {
@@ -68,14 +115,8 @@ function RecRow({ rec }: { rec: Recommendation }) {
         </span>
       </td>
       <td>
-        {/* Memory trend + idle */}
-        {rec.is_memory_leak ? (
-          <span className="badge badge-critical">
-            <IconTrendUp size={11} /> Leak +{rec.memory_leak_slope_pct_per_hour.toFixed(2)}%/hr
-          </span>
-        ) : (
-          <span className="badge badge-success"><IconCheck size={11} /> Stable</span>
-        )}
+        {/* Memory trend (Phase 7E) */}
+        <MemoryTrendCell rec={rec} />
         {rec.is_idle && (
           <div style={{ marginTop: 4 }}>
             <span className="badge badge-neutral">
@@ -85,18 +126,14 @@ function RecRow({ rec }: { rec: Recommendation }) {
         )}
       </td>
       <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-        {rec.lookback_days}d · +{Math.round(rec.safety_margin * 100)}% margin
-        {rec.data_completeness && (
-          <>
-            <br />
-            <span style={{ fontSize: 11 }}>{rec.data_completeness}</span>
-          </>
-        )}
+        <span style={{ fontSize: 11 }}>{fmtCoverage(rec)}</span>
+        <br />
+        +{Math.round(rec.safety_margin * 100)}% margin
         {rec.computed_at && (
           <>
             <br />
             <span style={{ fontSize: 11 }}>
-              cached {new Date(rec.computed_at).toLocaleTimeString()}
+              rec cached {new Date(rec.computed_at).toLocaleTimeString()}
             </span>
           </>
         )}
@@ -148,8 +185,8 @@ export default function Recommendations() {
                   Recommended limits computed from{' '}
                   <strong style={{ color: 'var(--paper-soft)' }}>p95 usage over the last 7 days</strong>{' '}
                   plus a <strong style={{ color: 'var(--paper-soft)' }}>+20% safety margin</strong>.
-                  Memory leak detection uses 6-hour linear regression.
-                  Results served from background cache (refreshed hourly).
+                  Leak assessment requires ≥30 min of history and sustained growth across three
+                  10-minute windows. Results served from background cache (refreshed hourly).
                 </span>
                 <button
                   id="rec-info-dismiss"

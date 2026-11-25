@@ -155,6 +155,15 @@ class LogConfig(BaseModel):
         return patterns
 
 
+class RecommenderConfig(BaseModel):
+    """Configurable thresholds for long-term memory trend confidence."""
+    leak_slope_threshold_pct_per_hour: float = Field(0.5, ge=0.0)
+    trend_min_elapsed_minutes: float = Field(30.0, ge=0.0)
+    trend_min_distinct_samples: int = Field(20, ge=2)
+    trend_required_growing_windows: int = Field(3, ge=1)
+    trend_window_width_minutes: int = Field(10, ge=1)
+
+
 class DRIConfig(BaseModel):
     """Main DRI configuration."""
     model_config = ConfigDict(hide_input_in_errors=True)
@@ -181,6 +190,7 @@ class DRIConfig(BaseModel):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     api: APIConfig = Field(default_factory=APIConfig)
     actions: ActionConfig = Field(default_factory=ActionConfig)
+    recommender: RecommenderConfig = Field(default_factory=RecommenderConfig)
 
     # Alert re-notify: once an alert fires for a violation episode, suppress
     # repeat alerts for this many seconds (unless the breach clears and restarts).

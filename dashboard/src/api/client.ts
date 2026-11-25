@@ -171,6 +171,18 @@ export interface ActionsData {
   total_count: number;
 }
 
+export interface TrendEvidence {
+  trend_label: string;             // e.g. "Suspected memory leak" | "Memory rising · early observation" | "No sustained leak trend" | "Memory stable" | "Trend evidence unavailable"
+  slope_pct_per_hour?: number;     // %/hr — matches LEAK_SLOPE_THRESHOLD
+  slope_pct_per_min: number;       // %/min — same unit as ContainerDetail Growth display
+  distinct_samples: number;
+  observation_minutes: number;
+  populated_growing_windows: number;
+  populated_windows_total: number;
+  consecutive_growing_windows?: number;
+  evidence_note: string;
+}
+
 export interface Recommendation {
   container_id: string;
   container_name: string;
@@ -182,11 +194,14 @@ export interface Recommendation {
   sample_count: number;
   lookback_days: number;
   lookback_actual_days: number;
+  observation_minutes?: number | null;
   safety_margin: number;
   data_completeness?: string;
   confidence_tier: string;   // "low" | "medium" | "high"
   is_memory_leak: boolean;
   memory_leak_slope_pct_per_hour: number;
+  /** Phase 7E: null/absent in legacy cached payloads */
+  trend_evidence?: TrendEvidence | null;
   is_idle: boolean;
   idle_recommendation?: string;
   computed_at?: string;

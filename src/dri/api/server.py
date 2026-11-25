@@ -89,7 +89,14 @@ class DRIAPIServer:
         set_api_key(config.api.api_key)
 
         # Instantiate Phase 3/4 components
-        self.recommender = ResourceRecommender(storage)
+        self.recommender = ResourceRecommender(
+            storage,
+            leak_slope_threshold=config.recommender.leak_slope_threshold_pct_per_hour,
+            min_elapsed_minutes=config.recommender.trend_min_elapsed_minutes,
+            min_distinct_samples=config.recommender.trend_min_distinct_samples,
+            required_growing_windows=config.recommender.trend_required_growing_windows,
+            window_width_minutes=config.recommender.trend_window_width_minutes,
+        )
         # Forecaster is imported lazily to avoid hard statsmodels dep
         self.forecaster = self._create_forecaster()
 
