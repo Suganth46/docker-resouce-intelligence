@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { api, type ContainerMetrics } from '../api/client';
+import { api } from '../api/client';
 import { usePolling } from '../hooks/usePolling';
 import { usePollingInterval } from '../hooks/PollingContext';
 import { MetricBar, Spinner, ErrorBanner } from '../components/MetricsCard';
@@ -51,7 +51,8 @@ export default function Overview() {
   const { intervalMs } = usePollingInterval();
   const { data: health, loading: hLoad, error: hErr } = usePolling(() => api.health(), intervalMs);
   const { data: metrics, loading: mLoad, error: mErr } = usePolling(() => api.metrics(), intervalMs);
-  const [selected, setSelected] = useState<ContainerMetrics | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected = metrics?.containers.find(container => container.container_id === selectedId);
 
   const loading = hLoad || mLoad;
   const error = hErr ?? mErr;
@@ -62,10 +63,13 @@ export default function Overview() {
       {selected && (
         <ContainerDetail
           container={selected}
-          onClose={() => setSelected(null)}
+          onClose={() => setSelectedId(null)}
         />
       )}
 
+      {selectedId && !selected && <div role="status" className="card">
+        Container no longer reported. <button onClick={() => setSelectedId(null)}>Dismiss</button>
+      </div>}
       <div className="topbar">
         <div className="topbar-title">System Overview</div>
         <div className="topbar-meta">
@@ -126,8 +130,8 @@ export default function Overview() {
                     style={{ padding: 20, cursor: 'pointer' }}
                     role="button"
                     tabIndex={0}
-                    onClick={() => setSelected(c)}
-                    onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') setSelected(c); }}
+                    onClick={() => setSelectedId(c.container_id)}
+                    onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') setSelectedId(c.container_id); }}
                   >
                     <div className="container-name">
                       {c.is_anomaly && (

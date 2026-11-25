@@ -116,7 +116,7 @@ export default function ContainerDetail({ container, onClose }: ContainerDetailP
           <div>
             <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 8 }}>
               {container.is_anomaly && (
-                <span title={container.anomaly_type ?? ''} style={{ color: 'var(--warn)' }}>
+                <span title={container.anomaly_detail ?? ''} style={{ color: 'var(--warn)' }}>
                   <IconAnomaly size={18} />
                 </span>
               )}
