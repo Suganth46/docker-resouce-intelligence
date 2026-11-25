@@ -506,10 +506,17 @@ async def container_logs(container_id: str, minutes: int = Query(15, ge=1, le=14
 @router.get("/containers/{container_id}/explain", response_model=ExplanationResponse)
 async def explain_container(container_id: str, window_minutes: int = Query(10, ge=1, le=120)):
     """Correlate logs, resource metrics and Docker events using ordered heuristic rules."""
-    if log_analyzer is None:
-        raise HTTPException(503, "Log analysis not enabled")
+    analyzer = log_analyzer
+    if analyzer is None:
+        logs = getattr(getattr(agent, "config", None), "logs", None)
+        if logs is None or logs.enabled:
+            raise HTTPException(503, "Log analysis not enabled")
+        from ..core.log_analyzer import LogAnalyzer
+        analyzer = LogAnalyzer(storage=storage, memory_growth_pct=logs.memory_growth_pct,
+                               cpu_saturation_pct=logs.cpu_saturation_pct)
+        analyzer.collection_state = lambda cid: "disabled"
     metrics = await aggregator.aggregate(container_id) if aggregator else None
-    return await log_analyzer.explain(container_id, window_minutes, metrics)
+    return await analyzer.explain(container_id, window_minutes, metrics)
 
 @router.get("/llm/status")
 async def llm_status():

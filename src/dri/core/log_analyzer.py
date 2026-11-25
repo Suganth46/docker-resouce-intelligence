@@ -72,8 +72,11 @@ class Template:
     crash: bool = False
     minutes: dict = field(default_factory=dict, repr=False)
 
-    def window_count(self, start, end):
-        return sum(count for minute, count in self.minutes.items() if start <= minute < end)
+    signal_minutes: dict = field(default_factory=dict, repr=False)
+
+    def window_count(self, start, end, *, signals_only=False):
+        minutes = self.signal_minutes if signals_only else self.minutes
+        return sum(count for minute, count in minutes.items() if start <= minute < end)
 
 
 class TemplateStore:
@@ -101,6 +104,7 @@ class TemplateStore:
         minute = ts.replace(second=0, microsecond=0)
         if minute > record.last_seen.replace(second=0, microsecond=0):
             cutoff = minute - timedelta(minutes=120)
+            record.signal_minutes = {m: n for m, n in record.signal_minutes.items() if m >= cutoff}
             record.minutes = {m: n for m, n in record.minutes.items() if m >= cutoff}
         record.last_seen = max(record.last_seen, ts)
         if minute >= record.last_seen.replace(second=0, microsecond=0) - timedelta(minutes=120):
@@ -242,6 +246,9 @@ class LogAnalyzer:
         bucket.total += 1
         if telemetry:
             return
+        if key in store.templates and (crash or entry["level"] in ("WARN", "ERROR")):
+            counts = store.templates[key].signal_minutes
+            counts[minute] = counts.get(minute, 0) + 1
         if entry["level"] == "ERROR":
             bucket.errors += 1
             history.last_error = max(history.last_error or ts, ts)
@@ -320,8 +327,8 @@ class LogAnalyzer:
             minutes=self.surge_warmup_minutes
         ):
             for r in eligible:
-                prior = r.window_count(baseline_start, start)
-                count = r.window_count(start, end)
+                prior = r.window_count(baseline_start, start, signals_only=True)
+                count = r.window_count(start, end, signals_only=True)
                 average = max(prior / len(windows), 1.0)
                 if prior and count >= max(20, 10 * average):
                     candidates.add(r.template)
@@ -351,7 +358,9 @@ class LogAnalyzer:
         warmed_at = history.observed_from + timedelta(minutes=self.warmup_minutes)
         for r in eligible:
             if r.first_seen >= warmed_at and r in recent:
-                count = r.window_count(start, end)
+                count = r.window_count(start, end, signals_only=True)
+                if not count:
+                    continue
                 return (
                     "new_error_pattern",
                     r.template,
@@ -421,7 +430,13 @@ class LogAnalyzer:
                     events.append(dict(action=event.action, timestamp=ts, attributes=attrs))
         context = {
             key: getattr(aggregated, key, None)
-            for key in ("memory_percent", "memory_percent_5m", "memory_growth_rate_5m", "cpu_percent", "cpu_percent_5m")
+            for key in (
+                "memory_percent",
+                "memory_percent_5m",
+                "memory_growth_rate_5m",
+                "cpu_percent",
+                "cpu_percent_5m",
+            )
         }
         ordered = sorted(templates.values(), key=lambda t: t["count"], reverse=True)
         result = Explanation(
@@ -439,13 +454,19 @@ class LogAnalyzer:
             [],
         )
         state = self.collection_state(container_id) if self.collection_state else "not_following"
-        result.coverage = dict(logs_status="no_output" if state == "following" and not lines else state,
-                               log_lines_in_window=lines, events_in_window=len(events),
-                               metrics_available=aggregated is not None, window_minutes=window_minutes)
+        result.coverage = dict(
+            logs_status="no_output" if state == "following" and not lines else state,
+            log_lines_in_window=lines,
+            events_in_window=len(events),
+            metrics_available=aggregated is not None,
+            window_minutes=window_minutes,
+        )
         if self.collection_info:
             result.coverage["collection"] = self.collection_info(container_id)
         if getattr(aggregated, "is_anomaly", False):
-            result.active_anomaly = dict(type=aggregated.anomaly_type, detail=aggregated.anomaly_detail)
+            result.active_anomaly = dict(
+                type=aggregated.anomaly_type, detail=aggregated.anomaly_detail
+            )
         result.verdict, result.confidence, result.reasons = _verdict(
             result, dependency_lines, stats, self.memory_growth_pct, self.cpu_saturation_pct
         )
@@ -487,8 +508,10 @@ def _verdict(report, dependency_lines, stats, growth_threshold, cpu_threshold):
         return (
             "crash_loop",
             "high",
-            [f"{len(deaths)} die events in {report.window_minutes} minutes",
-             *[f"die at {e['timestamp']:%H:%M:%S} UTC" for e in deaths]],
+            [
+                f"{len(deaths)} die events in {report.window_minutes} minutes",
+                *[f"die at {e['timestamp']:%H:%M:%S} UTC" for e in deaths],
+            ],
         )
     if deaths and any(
         e["action"] == "start" and e["timestamp"] > min(d["timestamp"] for d in deaths)
@@ -503,7 +526,9 @@ def _verdict(report, dependency_lines, stats, growth_threshold, cpu_threshold):
     if stats.anomaly == "log_error_spike":
         return "error_spike", "medium", [stats.anomaly_detail]
     active = report.active_anomaly
-    if (growth is not None and growth > growth_threshold) or (active and active["type"] == "memory_spike"):
+    if (growth is not None and growth > growth_threshold) or (
+        active and active["type"] == "memory_spike"
+    ):
         reasons = [f"Memory growth {growth:.1f}%/min over 5m"] if growth is not None else []
         avg = report.metric_context["memory_percent_5m"]
         noisy = memory is not None and avg is not None and memory < avg
@@ -516,11 +541,23 @@ def _verdict(report, dependency_lines, stats, growth_threshold, cpu_threshold):
         return "memory_growth_suspected", "low" if noisy else "medium", reasons
     cpu = report.metric_context["cpu_percent_5m"]
     if cpu is not None and cpu >= cpu_threshold:
-        return "cpu_saturation", "medium", [f"CPU averaged {cpu:.1f}% over 5m (threshold {cpu_threshold:g}%)"]
+        return (
+            "cpu_saturation",
+            "medium",
+            [f"CPU averaged {cpu:.1f}% over 5m (threshold {cpu_threshold:g}%)"],
+        )
     if active:
-        verdict = "inconclusive_no_logs" if not report.coverage["log_lines_in_window"] else "inconclusive"
+        verdict = (
+            "inconclusive_no_logs" if not report.coverage["log_lines_in_window"] else "inconclusive"
+        )
         return verdict, "low", [f"Active anomaly: {active['type']} — {active['detail']}"]
     coverage = report.coverage
     metrics = "metrics available" if coverage["metrics_available"] else "metrics unavailable"
-    return "none", "low", [f"No issue found in the available evidence "
-                           f"({coverage['log_lines_in_window']} log lines, {coverage['events_in_window']} events, {metrics})."]
+    return (
+        "none",
+        "low",
+        [
+            f"No issue found in the available evidence "
+            f"({coverage['log_lines_in_window']} log lines, {coverage['events_in_window']} events, {metrics})."
+        ],
+    )

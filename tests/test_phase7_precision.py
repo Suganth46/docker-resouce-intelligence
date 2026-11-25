@@ -82,3 +82,13 @@ def test_excluded_errors_still_count():
     stats = r.stats()
     assert stats.errors_1m == 80
     assert stats.anomaly is None
+
+
+def test_info_sharing_a_normalized_warning_template_does_not_surge():
+    r = Replay("app")
+    for _ in range(8):
+        r.line('message "WARN slow"')
+        r.now += timedelta(minutes=5)
+    r.line('message "INFO ready"', 60)
+    for _ in range(2):
+        assert r.stats().anomaly is None

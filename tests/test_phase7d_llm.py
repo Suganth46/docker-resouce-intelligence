@@ -243,6 +243,7 @@ async def test_api(fake, monkeypatch):
             url = "/api/v1/containers/web/explain"
             assert (await http.post(url + "/ai")).status_code == 401
             assert (await http.get("/api/v1/llm/status")).status_code == 401
+            assert (await http.get("/api/v1/logs/status")).status_code == 401
             http.headers["X-Api-Key"] = "local-test"
             data = (await http.get(url)).json()
             assert data["llm_summary"] is None and "llm_status" in data

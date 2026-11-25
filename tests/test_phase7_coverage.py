@@ -32,3 +32,21 @@ async def test_crash_loop_lists_death_times():
     result = await report(deaths)
     assert result.verdict == "crash_loop"
     assert result.reasons[1:] == [f"die at {e.timestamp:%H:%M:%S} UTC" for e in deaths]
+
+
+async def test_metrics_remain_visible_when_log_collection_disabled(monkeypatch):
+    from unittest.mock import AsyncMock
+    from dri.api import routes
+    from dri.config import DRIConfig
+
+    cfg = DRIConfig()
+    cfg.logs.enabled = False
+    aggregator = AsyncMock()
+    aggregator.aggregate.return_value = SimpleNamespace(cpu_percent_5m=145)
+    monkeypatch.setattr(routes, "agent", SimpleNamespace(config=cfg))
+    monkeypatch.setattr(routes, "aggregator", aggregator)
+    monkeypatch.setattr(routes, "log_analyzer", None)
+    monkeypatch.setattr(routes, "storage", None)
+    result = await routes.explain_container("app", 10)
+    assert result.verdict == "cpu_saturation"
+    assert result.coverage["logs_status"] == "disabled"
