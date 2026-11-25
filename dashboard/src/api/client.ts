@@ -51,6 +51,7 @@ export interface ContainerMetrics {
   memory_growth_rate_5m: number;
   is_anomaly: boolean;
   anomaly_type?: string;
+  anomaly_detail?: string;
   /** "running" | "stopped" — populated by the DRI status-poll loop. */
   container_status?: string;
   net_io_in: number;

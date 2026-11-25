@@ -129,6 +129,7 @@ class LLMConfig(BaseModel):
 
 class LogConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    surge_warmup_minutes: int = Field(30, ge=0)
     warmup_minutes: int = Field(10, ge=0)
     enabled: bool = True
     retention_hours: int = Field(24, gt=0)

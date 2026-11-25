@@ -23,6 +23,7 @@ class MetricsResponse(BaseModel):
     memory_growth_rate_5m: float
     is_anomaly: bool = False
     anomaly_type: Optional[str] = None
+    anomaly_detail: Optional[str] = None
     # Container lifecycle status surfaced from MetricsAggregator._stopped_at.
     # "running" while the container is live; "stopped" after the status-poll
     # loop detects it is no longer in the running set.

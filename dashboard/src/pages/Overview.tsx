@@ -131,7 +131,7 @@ export default function Overview() {
                   >
                     <div className="container-name">
                       {c.is_anomaly && (
-                        <span title={c.anomaly_type ?? ''} style={{ color: 'var(--warn)' }}>
+                        <span title={c.anomaly_detail ?? ''} style={{ color: 'var(--warn)' }}>
                           <IconAnomaly size={13} />
                         </span>
                       )}
@@ -163,7 +163,7 @@ export default function Overview() {
                     )}
 
                     {c.is_anomaly && c.anomaly_type && (
-                      <div className="badge badge-critical" style={{ marginBottom: 8, marginTop: 4 }}>
+                      <div title={c.anomaly_detail} className="badge badge-critical" style={{ marginBottom: 8, marginTop: 4 }}>
                         <IconCritical size={11} /> {c.anomaly_type.replace(/_/g, ' ')}
                       </div>
                     )}

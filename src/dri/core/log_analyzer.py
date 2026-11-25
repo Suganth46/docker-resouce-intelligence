@@ -1,5 +1,6 @@
 """Minute-level policy counters for sanitized log events."""
 
+from fnmatch import fnmatchcase
 import json
 import threading
 import re
@@ -115,8 +116,8 @@ class TemplateStore:
         )
         return sorted(records, key=lambda r: (r.count, r.last_seen), reverse=True)[:n]
 
-    def new_since(self, minutes):
-        cutoff = utcnow() - timedelta(minutes=minutes)
+    def new_since(self, minutes, now=None):
+        cutoff = (now or utcnow()) - timedelta(minutes=minutes)
         return [r for r in self.templates.values() if r.first_seen >= cutoff]
 
 
@@ -152,6 +153,10 @@ class History:
     observed_from: datetime
     templates: TemplateStore = field(default_factory=TemplateStore)
     buckets: deque = field(default_factory=lambda: deque(maxlen=121))
+    excluded: bool = False
+    surge_candidates: set = field(default_factory=set)
+    last_signal: Optional[tuple] = None
+    cleared: dict = field(default_factory=dict)
     last_error: Optional[datetime] = None
 
 
@@ -163,7 +168,13 @@ class LogAnalyzer:
         warmup_minutes=10,
         storage: Optional[StorageBackend] = None,
         root_cause=None,
+        now_fn=None,
+        surge_warmup_minutes=30,
+        policy_exclude_names=("dri-*",),
     ):
+        self.now = now_fn or utcnow
+        self.surge_warmup_minutes = surge_warmup_minutes
+        self.exclusions = policy_exclude_names
         self.root_cause = root_cause
         self.storage = storage
         self._lock = threading.RLock()
@@ -187,7 +198,7 @@ class LogAnalyzer:
             self._ingest(entry)
 
     def _ingest(self, entry):
-        now = utcnow()
+        now = self.now()
         self._expire(now)
         ts = entry["timestamp"]
         minute = ts.replace(second=0, microsecond=0)
@@ -196,10 +207,16 @@ class LogAnalyzer:
             self.history[cid] = History(ts, now)
         history = self.history[cid]
         history.last_seen = max(ts, history.last_seen)
+        history.excluded = any(
+            fnmatchcase(entry.get("container_name", cid), pat) for pat in self.exclusions
+        )
         store = history.templates
         key, _ = store.observe(entry)
         entry["template_id"] = key
-        crash = any(p.search(entry["message"]) for p in self.patterns)
+        telemetry = bool(
+            re.search(r"\bDocker event: \w+|^DRI dropped \d+ log lines", entry["message"])
+        )
+        crash = not telemetry and any(p.search(entry["message"]) for p in self.patterns)
         if crash and key in store.templates:
             store.templates[key].crash = True
         if minute < now.replace(second=0, microsecond=0) - timedelta(minutes=120) or minute > now:
@@ -215,6 +232,8 @@ class LogAnalyzer:
             )
         bucket.last_timestamp = max(bucket.last_timestamp, ts)
         bucket.total += 1
+        if telemetry:
+            return
         if entry["level"] == "ERROR":
             bucket.errors += 1
             history.last_error = max(history.last_error or ts, ts)
@@ -232,7 +251,7 @@ class LogAnalyzer:
             return self._stats(container_id)
 
     def _stats(self, container_id):
-        now = utcnow()
+        now = self.now()
         self._expire(now)
         history = self.history.get(container_id)
         result = LogStats()
@@ -249,48 +268,94 @@ class LogAnalyzer:
                 result.warnings_5m += bucket.warnings
                 result.crash_signals_5m += bucket.crashes
             result.lines_per_min = result.total_5m / 5
-            self._detect(history, result, minute, now)
+            recent = history.templates.new_since(5, now)
+            result.new_templates_5m = len(recent)
+            if not history.excluded:
+                signal = self._detect(history, result, minute, now, recent)
+                previous = history.last_signal
+                key = signal[:2] if signal else None
+                if previous and previous[:2] != key:
+                    history.cleared[previous[:2]] = (now, previous[2])
+                history.last_signal = None
+                history.cleared = {
+                    k: v for k, v in history.cleared.items() if now - v[0] < timedelta(minutes=5)
+                }
+                if signal and (key not in history.cleared or signal[2] > history.cleared[key][1]):
+                    peak = (
+                        max(signal[2], previous[2])
+                        if previous and previous[:2] == key
+                        else signal[2]
+                    )
+                    history.last_signal = (*key, peak)
+                    history.cleared.pop(key, None)
+                    result.anomaly, result.anomaly_detail = signal[0], signal[3]
         return result
 
-    def _detect(self, history, result, minute, now):
-        recent = history.templates.new_since(5)
-        result.new_templates_5m = len(recent)
-        errors = {bucket.minute: bucket.errors for bucket in history.buckets}
-        baseline = [errors.get(minute - timedelta(minutes=i), 0) for i in range(1, 61)]
-        spike, score = error_spike(baseline, result.errors_1m)
-        if spike:
-            result.anomaly = "log_error_spike"
-            result.anomaly_detail = f"{result.errors_1m} errors this minute (score {score:g})"
-            return
-
-        warmed_at = history.observed_from + timedelta(minutes=self.warmup_minutes)
-        if now >= warmed_at:
-            for record in recent:
-                if record.level in ("WARN", "ERROR") or record.crash:
-                    result.anomaly = "new_error_pattern"
-                    result.anomaly_detail = record.template
-                    return
-
+    def _detect(self, history, result, minute, now, recent):
         end = minute + timedelta(minutes=1)
         start = end - timedelta(minutes=5)
         baseline_start = start - timedelta(minutes=60)
-        for record in history.templates.top(500, since=start):
-            count = record.window_count(start, end)
-            if count < 5:
-                continue
-            average = record.window_count(baseline_start, start) / 12
-            if average > 0 and count >= 10 * average:
-                result.anomaly = "log_template_surge"
-                result.anomaly_detail = (
-                    f"{record.template}: {count} in 5 minutes (average {average:g})"
+        windows = {
+            (start - b.minute - timedelta(minutes=1)) // timedelta(minutes=5)
+            for b in history.buckets
+            if baseline_start <= b.minute < start
+        }
+        eligible = [
+            r
+            for r in history.templates.templates.values()
+            if (r.level in ("WARN", "ERROR") or r.crash)
+            and not re.search(r"\bDocker event: \w+|^DRI dropped ", r.template)
+        ]
+        candidates = set()
+        surge = None
+        if len(windows) >= 6 and now - history.observed_from >= timedelta(
+            minutes=self.surge_warmup_minutes
+        ):
+            for r in eligible:
+                prior = r.window_count(baseline_start, start)
+                count = r.window_count(start, end)
+                average = max(prior / len(windows), 1.0)
+                if prior and count >= max(20, 10 * average):
+                    candidates.add(r.template)
+                    if r.template in history.surge_candidates and (
+                        surge is None or count > surge[2]
+                    ):
+                        surge = (
+                            "log_template_surge",
+                            r.template,
+                            count,
+                            f"{r.template}: {count} in 5m vs {average:.1f} average per 5m "
+                            f"over the preceding 60m ({count / average:.1f}x)",
+                        )
+        history.surge_candidates = candidates
+        if surge:
+            return surge
+        errors = {b.minute: b.errors for b in history.buckets}
+        baseline = [errors.get(minute - timedelta(minutes=i), 0) for i in range(1, 61)]
+        spike, score = error_spike(baseline, result.errors_1m)
+        if spike and result.errors_1m > statistics.mean(baseline):
+            return (
+                "log_error_spike",
+                "",
+                result.errors_1m,
+                f"{result.errors_1m} errors this minute vs {statistics.mean(baseline):.1f}/min over 60m (score {score:g})",
+            )
+        warmed_at = history.observed_from + timedelta(minutes=self.warmup_minutes)
+        for r in eligible:
+            if r.first_seen >= warmed_at and r in recent:
+                count = r.window_count(start, end)
+                return (
+                    "new_error_pattern",
+                    r.template,
+                    count,
+                    f"New {r.level} pattern '{r.template}' occurred {count} times in 5m",
                 )
-                return
 
     async def explain(
         self, container_id: str, window_minutes=10, aggregated: Optional[AggregatedMetrics] = None
     ) -> Explanation:
         """Correlate recent observations using ordered heuristic verdicts."""
-        now = utcnow()
+        now = self.now()
         since = now - timedelta(minutes=window_minutes)
         signals = Counter()
         errors = dependency_lines = 0

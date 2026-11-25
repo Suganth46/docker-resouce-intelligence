@@ -122,7 +122,7 @@ def test_surge(monkeypatch):
     for i in range(50):
         analyzer.ingest(entry(now, f"job {i}"))
     stats = analyzer.stats("app")
-    assert stats.anomaly == "log_template_surge" and "average 1)" in stats.anomaly_detail
+    assert stats.anomaly is None  # INFO traffic is never a surge
 
 
 def test_spike_excludes_current_minute(monkeypatch):
@@ -146,7 +146,7 @@ async def test_aggregation(memory, expected):
     sample.memory_percent = memory
     agg.add_metrics(sample)
     agg.update_log_stats(
-        sample.container_id, LogStats(anomaly="log_error_spike", new_templates_5m=3)
+        sample.container_id, LogStats(anomaly="log_error_spike", anomaly_detail="80 errors this minute", new_templates_5m=3)
     )
     result = await agg.aggregate(sample.container_id)
     assert result.is_anomaly and result.anomaly_type == expected

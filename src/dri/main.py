@@ -129,6 +129,8 @@ class DRIAgent:
                     self.root_cause = RootCauseService(client, None, llm)
                 self.log_analyzer = LogAnalyzer(
                     self.config.logs.crash_patterns, warmup_minutes=self.config.logs.warmup_minutes,
+                    surge_warmup_minutes=self.config.logs.surge_warmup_minutes,
+                    policy_exclude_names=self.config.policy_exclude_names,
                     storage=self.storage, root_cause=self.root_cause,
                 )
                 self.log_collector = DockerLogCollector(

@@ -142,7 +142,7 @@ export default function ContainerDetail({ container, onClose }: ContainerDetailP
         {/* Anomaly banner */}
         {container.is_anomaly && container.anomaly_type && (
           <div className="badge badge-critical" style={{ marginBottom: 16, display: 'inline-flex' }}>
-            <IconCritical size={11} /> Anomaly: {container.anomaly_type.replace(/_/g, ' ')}
+            <IconCritical size={11} /> Anomaly: {container.anomaly_type.replace(/_/g, ' ')} · {container.anomaly_detail}
           </div>
         )}
 

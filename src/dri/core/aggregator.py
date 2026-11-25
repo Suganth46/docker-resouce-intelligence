@@ -237,19 +237,23 @@ class MetricsAggregator:
 
             cpu_anomaly, cpu_z = z_score_anomaly(cpu_history, metrics.cpu_percent, threshold=3.0)
             if cpu_anomaly:
+                metrics.anomaly_detail = f"CPU {metrics.cpu_percent:.1f}% (z={cpu_z:.1f} over {len(window)} samples)"
                 return True, "cpu_spike"
 
             mem_anomaly, mem_z = z_score_anomaly(mem_history, metrics.memory_percent, threshold=3.0)
             if mem_anomaly:
+                metrics.anomaly_detail = f"Memory {metrics.memory_percent:.1f}% (z={mem_z:.1f} over {len(window)} samples)"
                 return True, "memory_spike"
 
         # --- Legacy threshold path ---
         # Spike detection: sudden memory increase > 20% in 5 minutes
         if metrics.memory_growth_rate_5m > 20.0:
+            metrics.anomaly_detail = f"Memory growth {metrics.memory_growth_rate_5m:.1f}%/min over 5m"
             return True, "memory_spike"
 
         # High memory with rapid growth rate
         if metrics.memory_percent > 80.0 and metrics.memory_growth_rate_1m > 10.0:
+            metrics.anomaly_detail = f"Memory {metrics.memory_percent:.1f}%, rising {metrics.memory_growth_rate_1m:.1f}%/min over 1m"
             return True, "high_memory_rapid_growth"
 
         # Sustained high memory
@@ -258,6 +262,7 @@ class MetricsAggregator:
             metrics.memory_percent_5m > 90.0 and
             metrics.memory_percent_15m > 85.0
         ):
+            metrics.anomaly_detail = f"Memory {metrics.memory_percent:.1f}% now, {metrics.memory_percent_5m:.1f}% over 5m and {metrics.memory_percent_15m:.1f}% over 15m"
             return True, "sustained_high_memory"
 
         return False, None
@@ -333,7 +338,8 @@ class MetricsAggregator:
 
             # Detect anomalies (pass the window for z-score baseline)
             is_anomaly, anomaly_type = self._detect_anomaly(agg_metrics, window=window)
-            if not is_anomaly and logs.anomaly:
+            if not is_anomaly and logs.anomaly and logs.anomaly_detail:
+                agg_metrics.anomaly_detail = logs.anomaly_detail
                 is_anomaly, anomaly_type = True, logs.anomaly
             agg_metrics.is_anomaly = is_anomaly
             agg_metrics.anomaly_type = anomaly_type

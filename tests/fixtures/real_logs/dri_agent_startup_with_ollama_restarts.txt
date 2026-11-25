@@ -1,0 +1,27 @@
+INFO Initializing DRI agent
+INFO Connected to Docker daemon
+INFO Storage backend: SQLite
+INFO Storage initialized
+INFO forecaster statsmodels fallback
+INFO DRI agent initialized
+INFO Starting DRI agent
+INFO Docker event: die [container=abcd12345678, name=dri-ollama]
+INFO Docker event: start [container=abcd12345678, name=dri-ollama]
+INFO Docker event: die [container=abcd12345678, name=dri-ollama]
+INFO Docker event: start [container=abcd12345678, name=dri-ollama]
+INFO Docker event: die [container=abcd12345678, name=dri-ollama]
+INFO Docker event: start [container=abcd12345678, name=dri-ollama]
+INFO Docker event: die [container=abcd12345678, name=dri-ollama]
+INFO Docker event: start [container=abcd12345678, name=dri-ollama]
+INFO Docker event: die [container=abcd12345678, name=dri-ollama]
+INFO Docker event: start [container=abcd12345678, name=dri-ollama]
+INFO Docker event: die [container=abcd12345678, name=dri-ollama]
+INFO Docker event: start [container=abcd12345678, name=dri-ollama]
+INFO Docker event: die [container=abcd12345678, name=dri-ollama]
+INFO Docker event: start [container=abcd12345678, name=dri-ollama]
+INFO Docker event: die [container=abcd12345678, name=dri-ollama]
+INFO Docker event: start [container=abcd12345678, name=dri-ollama]
+INFO Docker event: die [container=abcd12345678, name=dri-ollama]
+INFO Docker event: start [container=abcd12345678, name=dri-ollama]
+INFO Docker event: die [container=abcd12345678, name=dri-ollama]
+INFO Docker event: start [container=abcd12345678, name=dri-ollama]
