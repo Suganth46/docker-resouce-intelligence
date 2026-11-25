@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { describeEvidenceState } from '../utils/describeEvidenceState';
 import { api } from '../api/client';
 import { usePolling } from '../hooks/usePolling';
 import { IconLog, IconRun } from './icons';
@@ -36,18 +37,23 @@ export function LogEvidence({ containerId }: Props) {
     }
   }
   const [expanded, setExpanded] = useState(false);
-  const badge = data?.verdict === 'none' ? 'badge-neutral'
+  const badge = data?.verdict === 'none' && !data.active_anomaly ? 'badge-neutral'
     : ['oom_kill_confirmed', 'crash_loop'].includes(data?.verdict ?? '') ? 'badge-critical' : 'badge-warning';
 
   return <section aria-label="Log Evidence" style={{ marginBottom: 24 }}>
     <div className="section-header"><h3 className="section-title"><IconLog /> Log Evidence</h3></div>
     {error ? <p role="status">{error}</p> : !data ? <p>Loading log evidence…</p> : <>
-      <span className={`badge ${badge}`}>{data.verdict.replace(/_/g, ' ')} · {data.confidence} confidence</span>
+      <p>{describeEvidenceState(data)}</p>
+      <div>{Object.entries(data.metric_context).filter(([, value]) => value != null).map(([key, value]) =>
+        <span key={key} className="badge badge-neutral">{key.replace(/_/g, ' ')} <code>{value?.toFixed(1)}{key.includes('growth') ? '%/min' : '%'}</code></span>
+      )}</div>
+      <span className={`badge ${badge}`}>Heuristic · {data.verdict.replace(/_/g, ' ')} · {data.confidence} confidence</span>
       <ul>{data.reasons.map(reason => <li key={reason}>{reason}</li>)}</ul>
+      {data.llm_status === 'disabled' && <small>Local AI analysis is disabled in configuration.</small>}
       {data.llm_status !== 'disabled' && <section aria-label="AI analysis">
         <h4>AI analysis</h4>
         {data.llm_status === 'model_missing' || data.llm_status === 'unavailable'
-          ? <p style={{ color: 'var(--muted)' }}>Local model not ready</p>
+          ? <p style={{ color: 'var(--muted)' }}>{data.llm_status === 'model_missing' ? 'Configured model is not installed yet.' : 'Local inference service is unavailable.'}</p>
           : pending || data.llm_status === 'pending'
           ? <div role="status"><span className="spinner" style={{ display: 'inline-block' }} /> Analyzing…</div>
           : data.llm_summary ? <>

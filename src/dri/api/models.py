@@ -257,7 +257,17 @@ class RelatedEventResponse(BaseModel):
     attributes: Dict[str, Any]
 
 
+class EvidenceCoverage(BaseModel):
+    logs_status: Literal["following", "no_output", "not_following", "unsupported_driver", "disabled"]
+    log_lines_in_window: int
+    events_in_window: int
+    metrics_available: bool
+    window_minutes: int
+
+
 class LogMetricContext(BaseModel):
+    memory_percent_5m: Optional[float] = None
+    cpu_percent_5m: Optional[float] = None
     memory_percent: Optional[float]
     memory_growth_rate_5m: Optional[float]
     cpu_percent: Optional[float]
@@ -272,6 +282,8 @@ class ExplanationResponse(BaseModel):
     new_templates: List[TemplateResponse]
     crash_signals: Dict[str, int]
     related_events: List[RelatedEventResponse]
+    active_anomaly: Optional[Dict[str, str]] = None
+    coverage: EvidenceCoverage
     metric_context: LogMetricContext
     verdict: str
     confidence: Literal["low", "medium", "high"]

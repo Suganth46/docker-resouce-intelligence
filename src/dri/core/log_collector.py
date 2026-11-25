@@ -64,6 +64,12 @@ class DockerLogCollector:
         self._running = False
         self.lines_ingested = self.lines_dropped = 0
 
+    def collection_state(self, cid):
+        if cid in self.unsupported:
+            return "unsupported_driver"
+        thread = self.threads.get(cid)
+        return "following" if thread and thread.is_alive() else "not_following"
+
     @property
     def containers_followed(self):
         return sum(thread.is_alive() for thread in self.threads.values())

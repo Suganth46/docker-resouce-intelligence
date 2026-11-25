@@ -161,6 +161,8 @@ async def test_http(monkeypatch):
                 "llm_summary",
                 "llm_status",
                 "metric_context",
+                "coverage",
+                "active_anomaly",
                 "verdict",
                 "confidence",
                 "reasons",

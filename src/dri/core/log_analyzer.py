@@ -41,6 +41,8 @@ class Explanation:
     reasons: list[str]
     llm_summary: Optional[LLMSummary] = None
     llm_status: str = "disabled"
+    coverage: dict = field(default_factory=dict)
+    active_anomaly: Optional[dict] = None
 
 
 def summary(explanation: Explanation, max_len=300) -> str:
@@ -169,9 +171,14 @@ class LogAnalyzer:
         storage: Optional[StorageBackend] = None,
         root_cause=None,
         now_fn=None,
+        memory_growth_pct=5,
+        cpu_saturation_pct=100,
         surge_warmup_minutes=30,
         policy_exclude_names=("dri-*",),
     ):
+        self.collection_state = None
+        self.memory_growth_pct = memory_growth_pct
+        self.cpu_saturation_pct = cpu_saturation_pct
         self.now = now_fn or utcnow
         self.surge_warmup_minutes = surge_warmup_minutes
         self.exclusions = policy_exclude_names
@@ -358,7 +365,7 @@ class LogAnalyzer:
         now = self.now()
         since = now - timedelta(minutes=window_minutes)
         signals = Counter()
-        errors = dependency_lines = 0
+        lines = errors = dependency_lines = 0
         templates = {}
         with self._lock:
             stats = self._stats(container_id)
@@ -369,6 +376,7 @@ class LogAnalyzer:
                     if since <= bucket.last_timestamp <= now:
                         signals.update(bucket.signals)
                         dependency_lines += bucket.dependency_lines
+                        lines += bucket.total
                         errors += bucket.errors
                 for key, record in history.templates.templates.items():
                     if record.last_seen >= since:
@@ -397,6 +405,7 @@ class LogAnalyzer:
                     templates[row.template_id]["sample"] = row.message
             # The persisted sample overlaps live counters. Take a lower bound
             # from each source without counting the same lines twice.
+            lines = max(lines, len(rows))
             signals |= sampled_signals
             errors = max(errors, sampled_errors)
             dependency_lines = max(dependency_lines, sampled_dependencies)
@@ -411,7 +420,7 @@ class LogAnalyzer:
                     events.append(dict(action=event.action, timestamp=ts, attributes=attrs))
         context = {
             key: getattr(aggregated, key, None)
-            for key in ("memory_percent", "memory_growth_rate_5m", "cpu_percent")
+            for key in ("memory_percent", "memory_percent_5m", "memory_growth_rate_5m", "cpu_percent", "cpu_percent_5m")
         }
         ordered = sorted(templates.values(), key=lambda t: t["count"], reverse=True)
         result = Explanation(
@@ -428,15 +437,21 @@ class LogAnalyzer:
             "low",
             [],
         )
+        state = self.collection_state(container_id) if self.collection_state else "not_following"
+        result.coverage = dict(logs_status="no_output" if state == "following" and not lines else state,
+                               log_lines_in_window=lines, events_in_window=len(events),
+                               metrics_available=aggregated is not None, window_minutes=window_minutes)
+        if getattr(aggregated, "is_anomaly", False):
+            result.active_anomaly = dict(type=aggregated.anomaly_type, detail=aggregated.anomaly_detail)
         result.verdict, result.confidence, result.reasons = _verdict(
-            result, dependency_lines, stats
+            result, dependency_lines, stats, self.memory_growth_pct, self.cpu_saturation_pct
         )
         if self.root_cause:
             result.llm_summary, result.llm_status = self.root_cause.lookup(result)
         return result
 
 
-def _verdict(report, dependency_lines, stats):
+def _verdict(report, dependency_lines, stats, growth_threshold, cpu_threshold):
     """Evaluate the first matching heuristic, keeping the evidence that supports it."""
     deaths = [e for e in report.related_events if e["action"] == "die"]
     oom = [
@@ -469,7 +484,8 @@ def _verdict(report, dependency_lines, stats):
         return (
             "crash_loop",
             "high",
-            [f"{len(deaths)} die events in {report.window_minutes} minutes"],
+            [f"{len(deaths)} die events in {report.window_minutes} minutes",
+             *[f"die at {e['timestamp']:%H:%M:%S} UTC" for e in deaths]],
         )
     if deaths and any(
         e["action"] == "start" and e["timestamp"] > min(d["timestamp"] for d in deaths)
@@ -483,10 +499,25 @@ def _verdict(report, dependency_lines, stats):
         return "resource_exhaustion", "medium", exhausted
     if stats.anomaly == "log_error_spike":
         return "error_spike", "medium", [stats.anomaly_detail]
-    return (
-        "none",
-        "low",
-        [
-            f"No heuristic matched across {report.error_count} errors and {len(report.related_events)} Docker events"
-        ],
-    )
+    active = report.active_anomaly
+    if (growth is not None and growth > growth_threshold) or (active and active["type"] == "memory_spike"):
+        reasons = [f"Memory growth {growth:.1f}%/min over 5m"] if growth is not None else []
+        avg = report.metric_context["memory_percent_5m"]
+        noisy = memory is not None and avg is not None and memory < avg
+        if memory is not None and avg is not None:
+            reasons.append(f"Memory now {memory:.1f}%, 5m average {avg:.1f}%")
+        if noisy:
+            reasons.append("Current memory is below its average. The series may be noisy.")
+        if active and active["detail"]:
+            reasons.append(active["detail"])
+        return "memory_growth_suspected", "low" if noisy else "medium", reasons
+    cpu = report.metric_context["cpu_percent_5m"]
+    if cpu is not None and cpu >= cpu_threshold:
+        return "cpu_saturation", "medium", [f"CPU averaged {cpu:.1f}% over 5m (threshold {cpu_threshold:g}%)"]
+    if active:
+        verdict = "inconclusive_no_logs" if not report.coverage["log_lines_in_window"] else "inconclusive"
+        return verdict, "low", [f"Active anomaly: {active['type']} — {active['detail']}"]
+    coverage = report.coverage
+    metrics = "metrics available" if coverage["metrics_available"] else "metrics unavailable"
+    return "none", "low", [f"No issue found in the available evidence "
+                           f"({coverage['log_lines_in_window']} log lines, {coverage['events_in_window']} events, {metrics})."]

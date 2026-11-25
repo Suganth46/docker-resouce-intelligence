@@ -121,7 +121,9 @@ export interface ExplainData {
   new_templates: LogTemplate[];
   crash_signals: Record<string, number>;
   related_events: { action: string; timestamp: string; attributes: Record<string, unknown> }[];
-  metric_context: { memory_percent: number | null; memory_growth_rate_5m: number | null; cpu_percent: number | null };
+  coverage: { logs_status: string; log_lines_in_window: number; events_in_window: number; metrics_available: boolean; window_minutes: number };
+  active_anomaly: { type: string; detail: string } | null;
+  metric_context: { cpu_percent_5m: number | null; memory_percent_5m: number | null; memory_percent: number | null; memory_growth_rate_5m: number | null; cpu_percent: number | null };
   verdict: string;
   confidence: 'low' | 'medium' | 'high';
   reasons: string[];

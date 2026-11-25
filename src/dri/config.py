@@ -129,6 +129,8 @@ class LLMConfig(BaseModel):
 
 class LogConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    memory_growth_pct: float = Field(5, gt=0)
+    cpu_saturation_pct: float = Field(100, gt=0)
     surge_warmup_minutes: int = Field(30, ge=0)
     warmup_minutes: int = Field(10, ge=0)
     enabled: bool = True

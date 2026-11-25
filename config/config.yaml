@@ -28,6 +28,8 @@ logs:
     queue_size: 20
     probe_interval_seconds: 30
   warmup_minutes: 10  # Observe each container before flagging new error patterns.
+  memory_growth_pct: 5
+  cpu_saturation_pct: 100  # Docker CPU is per core. Above 100% means more than one core.
   surge_warmup_minutes: 30  # Also requires six completed five-minute windows with traffic.
   enabled: true
   retention_hours: 24  # Log volume typically exceeds metrics volume.
