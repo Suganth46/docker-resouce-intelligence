@@ -1,0 +1,28 @@
+name: Bug report
+description: Report unexpected behavior in Docker Resource Intelligence.
+body:
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happened?
+      description: Describe what you observed and what you expected DRI to do.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How can we reproduce it?
+      description: Include the smallest set of steps, commands, or workload conditions that trigger the problem.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Version and environment
+      description: Include the DRI commit or image tag, installation method, and relevant software versions if known.
+      placeholder: e.g. Docker Compose on Ubuntu, SQLite backend
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Supporting evidence
+      description: Share relevant log excerpts, test output, or screenshots. For metric discrepancies, include the container, timestamp, and time window. Redact credentials.
