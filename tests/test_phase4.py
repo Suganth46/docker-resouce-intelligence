@@ -1,4 +1,4 @@
-"""Phase 4 tests — forecasting (linear regression + SES path)."""
+"""Phase 4 tests — forecasting (linear regression + Holt path)."""
 
 import asyncio
 import pytest
@@ -58,7 +58,10 @@ async def test_forecast_trending_upward():
         f"Upward trend: predicted ({result.predicted_value}) should exceed "
         f"current ({result.current_value})"
     )
-    assert result.method_used in ("linear_regression", "ses")
+    # Latest sample was half an hour ago. At +2 points/hour, 24.5 hours adds 49 points.
+    assert result.predicted_value == pytest.approx(98.0, abs=0.1)
+    from dri.core.forecaster import _HAS_STATSMODELS
+    assert result.method_used == ("holt_linear" if _HAS_STATSMODELS else "linear_regression")
     assert result.confidence_low <= result.predicted_value <= result.confidence_high
 
     await storage.close()

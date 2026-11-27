@@ -236,7 +236,7 @@ class ForecastResponse(BaseModel):
     confidence_low: float
     confidence_high: float
     predicted_at: datetime
-    method_used: str = Field(description="'linear_regression' or 'ses'")
+    method_used: str = Field(description="'linear_regression' or 'holt_linear' (older cached forecasts may report 'ses')")
     sample_count: int
 
     # Cache metadata — present when served from background cache

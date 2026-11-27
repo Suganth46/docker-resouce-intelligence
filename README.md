@@ -33,7 +33,7 @@ The goal is simple: **fewer pages, fewer wasted resources, and more confidence i
 - **Trend Awareness**: 5, 15, and 60-minute moving averages backed by a memory + database hybrid, so long windows stay accurate.
 - **Smart Anomaly Detection**: per-container z-score analysis, memory growth-rate spikes, and OOM prediction *before* the kill happens.
 - **Right-Sizing Recommendations**: p95-based CPU and memory limits with a configurable safety margin, confidence tiers, data-completeness reporting, idle (scale-to-zero) detection, and restart-aware memory-leak detection.
-- **Usage Forecasting**: project CPU or memory up to 7 days ahead with confidence intervals (Simple Exponential Smoothing, or linear regression as a zero-dependency fallback).
+- **Usage Forecasting**: project CPU or memory up to 7 days ahead with confidence intervals (Holt’s linear trend method, or linear regression as a zero-dependency fallback).
 - **Policy Engine**: YAML rules with durations, per-image and per-container overrides, and hot-reload.
 - **Automated Actions**:
   - **Throttle**: reduce CPU shares/quota and memory limits on offending containers
@@ -431,7 +431,7 @@ pip install ".[influxdb]"
 pip install ".[forecasting]"
 ```
 
-Enables Simple Exponential Smoothing; DRI falls back to linear regression when it is not installed.
+Enables Holt’s linear trend method; DRI falls back to linear regression when it is not installed.
 
 ### uvloop (Linux / macOS)
 

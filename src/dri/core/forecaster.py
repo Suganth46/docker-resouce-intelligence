@@ -1,7 +1,7 @@
 """
 Metrics forecaster: project CPU/memory usage N hours ahead per container.
 
-Uses Simple Exponential Smoothing (SES) when statsmodels is available,
+Uses Holt's linear trend when statsmodels is available,
 falls back to NumPy linear regression otherwise.
 """
 
@@ -22,9 +22,9 @@ logger = get_logger("forecaster")
 # Minimum samples required to produce a forecast
 MIN_SAMPLES = 15
 
-# Try to import statsmodels for SES
+# Try to import statsmodels for trend smoothing
 try:
-    from statsmodels.tsa.holtwinters import SimpleExpSmoothing  # type: ignore
+    from statsmodels.tsa.holtwinters import Holt  # type: ignore
     _HAS_STATSMODELS = True
 except ImportError:
     _HAS_STATSMODELS = False
@@ -72,7 +72,7 @@ class ForecastResult:
     confidence_low: float
     confidence_high: float
     predicted_at: datetime
-    method_used: str              # 'ses' or 'linear_regression'
+    method_used: str              # 'holt_linear' or 'linear_regression'
     sample_count: int
 
     def to_dict(self) -> dict:
@@ -99,7 +99,7 @@ class MetricsForecaster:
     """
     Forecast container resource usage N hours into the future.
 
-    Primary method: Simple Exponential Smoothing (requires statsmodels).
+    Primary method: Holt's linear trend (requires statsmodels).
     Fallback: linear regression via NumPy polyfit.
 
     Both methods compute confidence intervals as ±1.5 × residual RMSE.
@@ -143,8 +143,9 @@ class MetricsForecaster:
                 samples_available=len(samples),
             )
 
+        samples = [s for s in samples if getattr(s, metric, None) is not None]
         values = np.array(
-            [getattr(s, metric) for s in samples if getattr(s, metric, None) is not None],
+            [getattr(s, metric) for s in samples],
             dtype=float,
         )
 
@@ -159,13 +160,16 @@ class MetricsForecaster:
         current_value = float(values[-1])
         n = len(values)
 
-        # Determine how many extra steps to forecast.
-        # Each sample is roughly ``lookback_days*1440 / n`` minutes apart.
-        interval_minutes = (lookback_days * 1440) / n
-        steps_ahead = max(1, int((horizon_hours * 60) / interval_minutes))
+        predicted_at = datetime.now(timezone.utc) + timedelta(hours=horizon_hours)
+        last = samples[-1].timestamp
+        span = (last - samples[0].timestamp).total_seconds()
+        interval = span / (n - 1) if span > 0 else lookback_days * 86400 / n
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+        steps_ahead = max(1, round((predicted_at - last).total_seconds() / interval))
 
         if _HAS_STATSMODELS:
-            predicted, conf_low, conf_high, method = self._ses_forecast(
+            predicted, conf_low, conf_high, method = self._holt_forecast(
                 values, steps_ahead
             )
         else:
@@ -174,8 +178,8 @@ class MetricsForecaster:
             )
 
         # Clamp predictions to physically meaningful range
-        predicted = max(0.0, predicted)
-        conf_low = max(0.0, conf_low)
+        upper = 100.0 if metric == "memory_percent" else np.inf
+        predicted, conf_low, conf_high = np.clip([predicted, conf_low, conf_high], 0.0, upper)
 
         return ForecastResult(
             container_id=container_id,
@@ -185,35 +189,35 @@ class MetricsForecaster:
             predicted_value=predicted,
             confidence_low=conf_low,
             confidence_high=conf_high,
-            predicted_at=datetime.now(timezone.utc) + timedelta(hours=horizon_hours),
+            predicted_at=predicted_at,
             method_used=method,
             sample_count=n,
         )
 
-    def _ses_forecast(
+    def _holt_forecast(
         self,
         values: np.ndarray,
         steps_ahead: int,
     ) -> tuple[float, float, float, str]:
         """
-        Simple Exponential Smoothing forecast.
+        Holt's linear trend forecast.
 
         Returns (predicted, conf_low, conf_high, method_name).
         """
         try:
-            model = SimpleExpSmoothing(values, initialization_method="estimated")
+            model = Holt(values, initialization_method="estimated")
             fit = model.fit(optimized=True, use_brute=True)
-            forecast = fit.forecast(steps_ahead)
-            predicted = float(forecast[-1])
+            # Evaluate the additive trend directly at the target step.
+            predicted = float(fit.level[-1] + steps_ahead * fit.trend[-1])
 
             # Confidence interval from in-sample residuals RMSE
             residuals = values - fit.fittedvalues
             rmse = float(np.sqrt(np.mean(residuals ** 2)))
             half_width = 1.5 * rmse
 
-            return predicted, predicted - half_width, predicted + half_width, "ses"
+            return predicted, predicted - half_width, predicted + half_width, "holt_linear"
         except Exception as e:
-            logger.warning(f"SES failed ({e}), falling back to linear regression")
+            logger.warning(f"Holt fit failed ({e}), falling back to linear regression")
             return self._linear_forecast(values, steps_ahead)
 
     def _linear_forecast(
