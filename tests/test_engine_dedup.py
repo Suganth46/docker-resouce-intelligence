@@ -6,7 +6,7 @@ Covers:
   - 10 consecutive breaching evaluations produce exactly 1 alert (per episode)
   - A second alert only fires after alert_renotify_seconds elapses
   - Clearing the breach resets the episode so a new breach fires again
-  - violation_key is simplified (no container_id duplication)
+  - rules sharing a metric keep independent episodes and re-notify windows
 """
 
 import pytest
@@ -92,12 +92,9 @@ async def test_renotify_after_window_elapses():
     assert first is not None and len(first) == 1
     second = await engine.evaluate(metrics)
     assert not second
-    rule_key = "memory"
-    cid = "abc123"
-    engine._last_alerted[cid][rule_key] = (
-        datetime.now(timezone.utc) - timedelta(seconds=301)
-    )
-    third = await engine.evaluate(metrics)
+    with patch("dri.core.engine.datetime") as clock:
+        clock.now.return_value = first[0].timestamp + timedelta(seconds=301)
+        third = await engine.evaluate(metrics)
     assert third is not None and len(third) == 1, (
         "Expected alert after re-notify window elapsed"
     )
@@ -117,3 +114,41 @@ async def test_cleared_breach_resets_episode():
     assert a3 is not None and len(a3) == 1, (
         "Expected alert on re-breach after episode cleared"
     )
+
+
+@pytest.mark.parametrize(
+    "memory, expected",
+    [(90, [(60, "warning")]), (97, [(10, "throttle"), (60, "warning")])],
+)
+async def test_default_memory_rules_have_independent_timers(memory, expected):
+    from dri.config import load_config
+    from dri.core.engine import PolicyEngine
+
+    engine = PolicyEngine(load_config("config/config.yaml"))
+    metrics = _make_agg_metrics(memory_percent=memory)
+    start = datetime.now(timezone.utc)
+    events = []
+    with patch("dri.core.engine.datetime") as clock:
+        for seconds in (0, 9, 10, 59, 60, 61):
+            clock.now.return_value = start + timedelta(seconds=seconds)
+            for alert in await engine.evaluate(metrics) or []:
+                events.append((seconds, alert.alert_type))
+    assert events == expected
+
+
+async def test_matching_policy_starts_its_own_episode():
+    from dri.config import ContainerPolicy
+
+    engine = _make_engine(duration_seconds=60)
+    engine.config.container_policies.append(ContainerPolicy(
+        name="worker", selector={"image": "worker"}, rules=engine.config.global_policy.rules
+    ))
+    metrics = _make_agg_metrics()
+    start = datetime.now(timezone.utc)
+    counts = []
+    with patch("dri.core.engine.datetime") as clock:
+        for seconds, image in ((0, "base"), (30, "worker"), (60, "worker"), (90, "worker")):
+            metrics.image = image
+            clock.now.return_value = start + timedelta(seconds=seconds)
+            counts.append(len(await engine.evaluate(metrics) or []))
+    assert counts == [0, 0, 1, 1]

@@ -15,6 +15,8 @@ logger = get_logger("engine")
 
 _warned_metrics = set()
 
+RuleKey = tuple[str, tuple[tuple[str, str], ...], str, str, float, int, str]
+
 def _metric_unit(metric: str) -> str:
     if "growth_rate" in metric:
         return "%/min"
@@ -64,10 +66,9 @@ class PolicyEngine:
         """
         self._excluded_ids = set()
         self.config = config
-        # violation_key -> first-breach timestamp (simplified: just rule.metric, no container_id prefix)
-        self._violation_tracker: Dict[str, Dict[str, datetime]] = defaultdict(dict)
-        # violation_key -> timestamp of last fired alert (for re-notify suppression)
-        self._last_alerted: Dict[str, Dict[str, datetime]] = defaultdict(dict)
+        # Track each rule episode and its notification cooldown within the container.
+        self._violation_tracker: Dict[str, Dict[RuleKey, datetime]] = defaultdict(dict)
+        self._last_alerted: Dict[str, Dict[RuleKey, datetime]] = defaultdict(dict)
         self._alert_callbacks: List[Callable] = []
 
     def register_alert_callback(self, callback: Callable) -> None:
@@ -158,9 +159,10 @@ class PolicyEngine:
         renotify_seconds: int = getattr(self.config, "alert_renotify_seconds", 300)
 
         for policy in applicable_policies:
+            selector = tuple(sorted(policy.selector.items()))
             for rule in policy.rules:
-                # Simplified violation key: just the metric name (container_id is the outer dict key)
-                violation_key = rule.metric
+                violation_key = (policy.name, selector, rule.metric, rule.operator,
+                                 rule.value, rule.duration_seconds, rule.action)
 
                 # Check if metric breaches threshold
                 if self._evaluate_metric(rule, metrics):
