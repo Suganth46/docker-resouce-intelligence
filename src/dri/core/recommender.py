@@ -530,9 +530,7 @@ class ResourceRecommender:
             b_vals = [v for _, v in bucket]
             b_mean = sum(b_vals) / len(b_vals)
 
-            # A window counts as growing only with >= 2 distinct timestamps,
-            # net positive rise, positive intra-window slope, non-decreasing mean
-            # over the immediately preceding window, and without sawtooth reversal.
+            # With multiple samples, measure growth inside the window.
             b_grows = False
             if len(bucket) >= 2:
                 b_net = b_vals[-1] - b_vals[0]
@@ -542,6 +540,16 @@ class ResourceRecommender:
                 mean_progressed = prev_populated_mean is None or b_mean > prev_populated_mean
                 if b_net > 0 and b_slope > 0 and b_drops <= 0.5 * b_net and mean_progressed:
                     b_grows = True
+            elif prev_populated_mean is not None:
+                # At sparse cadences a populated window may have just one sample.
+                # Attribute the observed change to the window where it ends.
+                prev_ts, prev_value = buckets[b_idx - 1][-1]
+                ts, value = bucket[0]
+                b_grows = (
+                    (ts - prev_ts).total_seconds() <= bucket_seconds
+                    and value > prev_value
+                    and value > prev_populated_mean
+                )
 
             if b_grows:
                 populated_growing += 1

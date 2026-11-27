@@ -215,6 +215,17 @@ def test_t4_sawtooth_not_a_leak():
         assert "dropped repeatedly" in ev.evidence_note.lower()
 
 
+@pytest.mark.parametrize("minute,value,expected", [
+    (18, 31, 2),  # Nine minutes after the preceding sample and still rising.
+    (19.5, 31, 1),  # More than a window elapsed without observations.
+    (18, 29, 1),  # Above the previous mean, but below the last value.
+])
+def test_single_sample_window_needs_recent_observed_growth(minute, value, expected):
+    samples = rising_samples(20, span_minutes=9, start_pct=10, end_pct=30)
+    samples.append(FakeSample(BASE + timedelta(minutes=minute), value))
+    assert assess(samples).populated_growing_windows == expected
+
+
 def test_historical_growth_streak_does_not_qualify():
     """A recent plateau invalidates an otherwise qualifying historical streak."""
     samples = rising_samples(60, span_minutes=59.0, start_pct=10.0, end_pct=40.0)
