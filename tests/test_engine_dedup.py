@@ -120,11 +120,13 @@ async def test_cleared_breach_resets_episode():
     "memory, expected",
     [(90, [(60, "warning")]), (97, [(10, "throttle"), (60, "warning")])],
 )
-async def test_default_memory_rules_have_independent_timers(memory, expected):
+async def test_memory_rules_have_independent_timers(memory, expected):
     from dri.config import load_config
     from dri.core.engine import PolicyEngine
 
-    engine = PolicyEngine(load_config("config/config.yaml"))
+    config = load_config("config/config.yaml")
+    next(r for r in config.global_policy.rules if r.metric == "memory" and r.value == 95).action = "throttle"
+    engine = PolicyEngine(config)
     metrics = _make_agg_metrics(memory_percent=memory)
     start = datetime.now(timezone.utc)
     events = []

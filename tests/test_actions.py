@@ -26,7 +26,15 @@ def _make_container(name="test-container"):
     c = MagicMock()
     c.name = name
     c.id = "abc123def456"
-    c.update = MagicMock(return_value=None)
+    c.attrs = {"HostConfig": {"CpuShares": 1024, "CpuQuota": 0, "Memory": 2**30,
+                              "MemoryReservation": 512 * 2**20, "MemorySwap": 2**31}}
+    c.stats.return_value = {"memory_stats": {"usage": 128 * 2**20}}
+    def update(**params):
+        from dri.actions.throttle import ThrottleAction
+        for key, value in params.items():
+            if key in ThrottleAction._fields:
+                c.attrs["HostConfig"][ThrottleAction._fields[key]] = value
+    c.update = MagicMock(side_effect=update)
     c.stop = MagicMock(return_value=None)
     c.start = MagicMock(return_value=None)
     return c
@@ -75,7 +83,7 @@ async def test_throttle_success():
     result = await action.throttle("abc", ThrottleConfig(cpu_shares=512, memory_limit="512m"))
     assert result["success"] is True
     container.update.assert_called_once_with(
-        cpu_shares=512, mem_limit=536870912, memswap_limit=536870912
+        cpu_shares=512, mem_limit=536870912
     )
 
 
@@ -105,7 +113,7 @@ async def test_throttle_empty_config():
 async def test_throttle_memory_reservation_uses_correct_docker_key():
     """P0-2: memory_reservation must be passed as mem_reservation to container.update(),
     not as 'memory_reservation' (which docker-py ignores / rejects).
-    Also asserts mem_limit and memswap_limit are set correctly for '512m'.
+    The memory limit is independent of swap.
     """
     from dri.actions.throttle import ThrottleAction
     from dri.config import ThrottleConfig
@@ -117,7 +125,7 @@ async def test_throttle_memory_reservation_uses_correct_docker_key():
     call_kwargs = container.update.call_args[1]
     # docker-py keys
     assert "mem_limit" in call_kwargs, "mem_limit not passed to container.update()"
-    assert "memswap_limit" in call_kwargs, "memswap_limit not passed to container.update()"
+    assert "memswap_limit" not in call_kwargs
     assert "mem_reservation" in call_kwargs, "mem_reservation not passed (got memory_reservation?)"
     assert "memory_reservation" not in call_kwargs, "wrong key 'memory_reservation' passed to container.update()"
     assert call_kwargs["mem_limit"] == 512 * 1024 * 1024
@@ -369,3 +377,146 @@ async def test_policy_check_loop_calls_predict_oom_and_emits_warning_alert():
     assert any(a.alert_type == "warning" for a in alerts_received)
     assert any(a.container_id == "crit001" for a in alerts_received)
 
+
+
+@pytest.mark.asyncio
+async def test_shipped_policy_only_warns():
+    from dri.config import load_config
+    from dri.core.engine import PolicyEngine
+    from tests.test_engine_dedup import _make_agg_metrics
+
+    engine = PolicyEngine(load_config("config/config.yaml"))
+    metrics = _make_agg_metrics(memory_percent=99, growth_rate_5m=25)
+    metrics.cpu_percent = 80
+    start = datetime.now(timezone.utc)
+    with patch("dri.core.engine.datetime") as clock:
+        clock.now.return_value = start
+        await engine.evaluate(metrics)
+        clock.now.return_value += timedelta(seconds=61)
+        alerts = await engine.evaluate(metrics)
+    assert len(alerts) == 4
+    assert all(alert.alert_type == "warning" for alert in alerts)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("existing,usage", [
+    (256, 64),  # The requested 512 MiB would raise the existing limit.
+    (1024, 600),  # The running workload already uses more than the target.
+    (0, 64),  # Docker cannot restore an unset hard limit with update(memory=0).
+])
+async def test_unsafe_memory_target_skips_update(existing, usage):
+    from dri.actions.throttle import ThrottleAction
+    from dri.config import ThrottleConfig
+
+    container = _make_container()
+    container.attrs["HostConfig"]["Memory"] = existing * 2**20
+    container.stats.return_value["memory_stats"]["usage"] = usage * 2**20
+    action = ThrottleAction(_make_docker_client(container))
+    result = await action.throttle("abc", ThrottleConfig(memory_limit="512m", cpu_shares=256), metric="memory")
+    assert not result["success"]
+    container.update.assert_not_called()
+    assert not action.pending
+
+
+@pytest.mark.asyncio
+async def test_throttle_recovery_after_restart(tmp_path):
+    from dri.actions.throttle import ThrottleAction
+    from dri.config import DRIConfig, ThresholdRule, ThrottleConfig
+    from dri.core.engine import PolicyEngine
+    from dri.core.storage import MetricsStorage
+    from dri.main import DRIAgent
+    from tests.test_engine_dedup import _make_agg_metrics
+    import json
+
+    cfg = DRIConfig()
+    cfg.actions.throttle = ThrottleConfig(cpu_shares=512, memory_limit="512m")
+    cfg.global_policy.rules = [ThresholdRule(metric="cpu", operator=">", value=50, action="throttle")]
+    container = _make_container()
+    client = _make_docker_client(container)
+    path = str(tmp_path / "metrics.db")
+    agent = DRIAgent(cfg)
+    agent.storage = MetricsStorage(path)
+    await agent.storage.init()
+    agent.throttle_action = ThrottleAction(client, storage=agent.storage)
+    await agent._handle_alert_action(_make_alert(metric="cpu"))
+    container.update.assert_called_once_with(cpu_shares=512)
+    container.stats.assert_not_called()
+    record, = await agent.storage.get_recent_actions()
+    assert json.loads(record.details)["previous"] == {"cpu_shares": 1024}
+    await agent.storage.close()
+
+    agent = DRIAgent(cfg)
+    agent.storage = MetricsStorage(path)
+    await agent.storage.init()
+    agent.policy_engine = PolicyEngine(cfg)
+    agent.throttle_action = ThrottleAction(client, storage=agent.storage)
+    await agent.throttle_action.initialize()
+    metrics = _make_agg_metrics(container_id="abc123")
+    metrics.cpu_percent = 75
+    await agent._restore_cleared_throttles(metrics)
+    assert container.update.call_count == 1
+    metrics.cpu_percent = 49
+    await agent._restore_cleared_throttles(metrics)
+    container.update.assert_called_with(cpu_shares=1024)
+    assert await agent.storage.get_pending_throttles() == {}
+    restored, _ = await agent.storage.get_recent_actions()
+    assert restored.action_type == "restore" and restored.success
+    await agent.storage.close()
+
+
+@pytest.mark.asyncio
+async def test_external_memory_change_survives_restore():
+    from dri.actions.throttle import ThrottleAction
+    from dri.config import ThrottleConfig
+
+    container = _make_container()
+    action = ThrottleAction(_make_docker_client(container))
+    result = await action.throttle("abc", ThrottleConfig(cpu_shares=256, memory_limit="512m"), metric="memory_5m")
+    assert result["previous"] == {"mem_limit": 2**30}
+    container.update.assert_called_once_with(mem_limit=512 * 2**20)
+    container.attrs["HostConfig"]["Memory"] = 768 * 2**20
+    assert (await action.restore("abc", "memory"))["restored"] == {}
+    assert container.update.call_count == 1
+
+
+async def test_restore_retries_failed_memory_update():
+    from dri.actions.throttle import ThrottleAction
+    from dri.config import ThrottleConfig
+
+    container = _make_container()
+    action = ThrottleAction(_make_docker_client(container))
+    cfg = ThrottleConfig(memory_limit="512m")
+    assert (await action.throttle("abc", cfg, metric="memory"))["success"]
+    real_update = container.update.side_effect
+    container.update.side_effect = RuntimeError("daemon unavailable")
+    assert not (await action.restore("abc", "memory"))["success"]
+    assert ("abc", "memory") in action.pending
+    container.update.side_effect = real_update
+    result = await action.restore("abc", "memory")
+    assert result["restored"] == {"mem_limit": 2**30}
+    assert not action.pending
+
+
+async def test_no_update_when_rollback_snapshot_cannot_be_saved():
+    from dri.actions.throttle import ThrottleAction
+    from dri.config import ThrottleConfig
+
+    storage = AsyncMock()
+    storage.set_pending_throttle.side_effect = RuntimeError("database unavailable")
+    container = _make_container()
+    action = ThrottleAction(_make_docker_client(container), storage=storage)
+    result = await action.throttle("abc", ThrottleConfig(cpu_quota=50000), metric="cpu")
+    assert not result["success"]
+    container.update.assert_not_called()
+
+
+async def test_unlimited_cpu_quota_recorded_and_restored():
+    from dri.actions.throttle import ThrottleAction
+    from dri.config import ThrottleConfig
+
+    container = _make_container()
+    action = ThrottleAction(_make_docker_client(container))
+    result = await action.throttle("abc", ThrottleConfig(cpu_quota=50000), metric="cpu")
+    assert result["previous"] == {"cpu_quota": 0}
+    assert (await action.restore("abc", "cpu"))["success"]
+    assert container.update.call_args_list == [call(cpu_quota=50000), call(cpu_quota=-1)]

@@ -237,7 +237,7 @@ The Python agent defaults to AI disabled. Plain Compose starts Ollama and enable
 
 From `deployment/`, copy `.env.example` to `.env`, set `DRI_LLM_MODEL` to select a different model, then run `docker compose up -d`. Set `DRI_LLM_ENABLED=false` to disable analysis in the agent. The Ollama service still follows the Compose startup and download settings. For an NVIDIA host with the container runtime installed, use `docker compose -f docker-compose.yml -f docker-compose.gpu.yml up`.
 
-The global policy excludes names matching `dri-*` through `policy_exclude_names`. DRI still collects their metrics and logs. This keeps the CPU throttle rule from applying its 512 MB memory cap to Ollama or restarting the monitoring stack. Supply custom shell-style patterns or an empty list to include every container. Ollama's own Compose limits are 2 GiB and 2 CPUs and require a Docker daemon that supports cgroups.
+The global policy excludes names matching `dri-*` through `policy_exclude_names`. DRI still collects their metrics and logs. The shipped rules only warn. To opt in to Docker updates, set a specific rule’s action to `throttle` and configure the corresponding CPU or memory target. Supply custom shell-style patterns or an empty list to include every container. Ollama's own Compose limits are 2 GiB and 2 CPUs and require a Docker daemon that supports cgroups.
 
 See the [benchmark results and selection criteria](docs/log-intelligence.md#local-model-benchmark) for the status of the provisional default.
 
@@ -283,7 +283,7 @@ api:
 
 actions:
   throttle:
-    cpu_shares: 512
+    cpu_quota: 50000
     memory_limit: "512m"
   isolate_cpuset: "0-1"
   webhook_url: null
@@ -309,10 +309,14 @@ global_policy:
       operator: ">="
       value: 95.0
       duration_seconds: 10
-      action: "throttle"
+      action: "warning"
 ```
 
 Available policy metrics: `cpu`, `cpu_5m`, `cpu_15m`, `cpu_60m`, `memory`, `memory_5m`, `memory_15m`, `memory_60m`, `memory_growth_rate_1m`, `memory_growth_rate_5m`, `log_errors_1m`, `log_errors_5m`, `log_warnings_5m`, `log_crash_signals_5m`, `log_new_templates_5m`.
+
+CPU rules apply only CPU settings. CPU shares control relative weight under contention. A positive CPU quota can throttle a container with an unlimited quota. Memory rules check Docker’s current usage immediately before tightening an existing limit and leave swap unchanged. DRI skips settings whose unset value Docker cannot restore with a live update (including an unlimited memory limit and unset CPU shares). Choose targets appropriate for the workload.
+
+The action history records the previous and applied limits. While monitoring the container, DRI restores its settings once all matching throttle conditions for that resource clear. Pending restorations survive agent restarts in the configured storage backend. Values changed externally after throttling are preserved.
 
 ### Per-container policy example
 

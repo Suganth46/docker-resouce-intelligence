@@ -7,7 +7,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Callable, Any
 
-from ..config import DRIConfig, ThresholdRule
+from ..config import DRIConfig, ThresholdRule, throttle_resource
 from ..utils.logger import get_logger
 from ..utils.metrics import AggregatedMetrics, Alert
 
@@ -116,6 +116,36 @@ class PolicyEngine:
 
         return False
 
+    def _applicable_policies(self, metrics):
+        # Get applicable policies (global + container-specific)
+        applicable_policies = [self.config.global_policy] if self.config.global_policy.enabled else []
+
+        for policy in self.config.container_policies:
+            if not policy.enabled:
+                continue
+
+            # Check if policy applies to this container
+            for key, value in policy.selector.items():
+                if key == "image":
+                    image_str = getattr(metrics, "image", "") or ""
+                    try:
+                        if image_str and re.search(value, image_str):
+                            applicable_policies.append(policy)
+                    except re.error as e:
+                        logger.error(f"Invalid regex in policy selector for image '{value}': {e}")
+                elif key == "container_id" and value == metrics.container_id:
+                    applicable_policies.append(policy)
+
+        return applicable_policies
+
+    def throttle_breached(self, metrics, resource):
+        """Keep a resource throttled until all matching throttle conditions clear."""
+        return not self.config.excludes_name(metrics.container_name) and any(
+            rule.action == "throttle" and throttle_resource(rule.metric) == resource
+            and self._evaluate_metric(rule, metrics)
+            for policy in self._applicable_policies(metrics) for rule in policy.rules
+        )
+
     async def evaluate(
         self,
         metrics: AggregatedMetrics,
@@ -135,30 +165,11 @@ class PolicyEngine:
                 logger.debug(f"Skipping policies for excluded container {metrics.container_name}")
             return None
 
-        # Get applicable policies (global + container-specific)
-        applicable_policies = [self.config.global_policy]
-
-        for policy in self.config.container_policies:
-            if not policy.enabled:
-                continue
-
-            # Check if policy applies to this container
-            for key, value in policy.selector.items():
-                if key == "image":
-                    image_str = getattr(metrics, "image", "") or ""
-                    try:
-                        if image_str and re.search(value, image_str):
-                            applicable_policies.append(policy)
-                    except re.error as e:
-                        logger.error(f"Invalid regex in policy selector for image '{value}': {e}")
-                elif key == "container_id" and value == metrics.container_id:
-                    applicable_policies.append(policy)
-
         alerts = []
         now = datetime.now(timezone.utc)
         renotify_seconds: int = getattr(self.config, "alert_renotify_seconds", 300)
 
-        for policy in applicable_policies:
+        for policy in self._applicable_policies(metrics):
             selector = tuple(sorted(policy.selector.items()))
             for rule in policy.rules:
                 violation_key = (policy.name, selector, rule.metric, rule.operator,

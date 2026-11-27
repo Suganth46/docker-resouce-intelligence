@@ -95,6 +95,14 @@ class StorageBackend(ABC):
         """Persist a dri.utils.metrics.Action."""
 
     @abstractmethod
+    async def get_pending_throttles(self) -> dict:
+        """Return outstanding rollback snapshots keyed by container ID and resource."""
+
+    @abstractmethod
+    async def set_pending_throttle(self, cid: str, resource: str, snapshot: Optional[dict]) -> None:
+        """Insert a rollback snapshot, or remove it after reconciliation."""
+
+    @abstractmethod
     async def get_recent_actions(
         self,
         limit: int = 100,

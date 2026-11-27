@@ -48,6 +48,15 @@ class ContainerPolicy(BaseModel):
     enabled: bool = True
 
 
+def throttle_resource(metric: str) -> Optional[str]:
+    if metric in ("cpu", "cpu_5m", "cpu_15m", "cpu_60m"):
+        return "cpu"
+    if metric in ("memory", "memory_5m", "memory_15m", "memory_60m", "growth_rate_1m",
+                  "growth_rate_5m", "memory_growth_rate_1m", "memory_growth_rate_5m"):
+        return "memory"
+    return None
+
+
 class ThrottleConfig(BaseModel):
     """CPU/Memory throttling configuration."""
     cpu_shares: Optional[int] = None

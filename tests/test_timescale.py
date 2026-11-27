@@ -126,6 +126,7 @@ async def storage():
     loop = asyncio.get_running_loop()
     def _drop():
         with st.engine.begin() as conn:
+            conn.execute(sa.text("DROP TABLE IF EXISTS pending_throttles"))
             conn.execute(sa.text("DROP TABLE IF EXISTS container_logs CASCADE"))
             conn.execute(sa.text("DROP TABLE IF EXISTS metrics_samples CASCADE"))
             conn.execute(sa.text("DROP TABLE IF EXISTS alerts CASCADE"))
@@ -494,3 +495,13 @@ async def test_log_evidence_after_restart(storage):
     from tests.test_phase7_coverage import assert_restart_coverage
 
     await assert_restart_coverage(storage)
+
+
+@pytest.mark.timescale
+async def test_throttle_snapshot_round_trip(storage):
+    snapshot = {"container_id": "abc123", "previous": {"cpu_quota": -1},
+                "parameters": {"cpu_quota": 50000}}
+    await storage.set_pending_throttle("abc123", "cpu", snapshot)
+    assert (await storage.get_pending_throttles())[("abc123", "cpu")] == snapshot
+    await storage.set_pending_throttle("abc123", "cpu", None)
+    assert ("abc123", "cpu") not in await storage.get_pending_throttles()

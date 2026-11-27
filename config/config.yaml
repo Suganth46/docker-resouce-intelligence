@@ -93,13 +93,13 @@ api:
 
 actions:
   throttle:
-    cpu_shares: 512
+    cpu_quota: 50000
     memory_limit: "512m"
   isolate_cpuset: "0-1"
   webhook_url: null
   restart_grace_period: 30
 
-# Global default policy
+# Global default policy (alerts only; opt in by configuring an action rule).
 # Shell-style container-name patterns exempt from automatic policy evaluation and actions.
 policy_exclude_names: ["dri-*"]
 global_policy:
@@ -117,7 +117,7 @@ global_policy:
       operator: ">="
       value: 50.0
       duration_seconds: 15
-      action: "throttle"
+      action: "warning"
 
     - metric: "memory_growth_rate_5m"
       operator: ">"
@@ -129,7 +129,7 @@ global_policy:
       operator: ">="
       value: 95.0
       duration_seconds: 10
-      action: "throttle"
+      action: "warning"
 
 # Per-container policies
 container_policies: []

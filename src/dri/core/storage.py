@@ -26,11 +26,13 @@ import sqlalchemy as sa
 from ..utils.logger import get_logger
 from ..utils.metrics import ContainerMetrics, AggregatedMetrics, Alert, Action
 from .log_window import LogWindow, read_log_window
+from .throttle_state import throttle_table, read_pending, write_pending
 from .storage_base import StorageBackend
 
 logger = get_logger("storage")
 
 Base = declarative_base()
+pending_throttles = throttle_table(Base.metadata)
 
 
 class LogRecord(Base):
@@ -366,6 +368,12 @@ class SqliteStorage(StorageBackend):
                 await loop.run_in_executor(None, _save)
             except Exception as e:
                 logger.error(f"Failed to save alert: {e}")
+
+    async def get_pending_throttles(self) -> dict:
+        return await asyncio.to_thread(read_pending, self.engine, pending_throttles)
+
+    async def set_pending_throttle(self, cid: str, resource: str, snapshot: Optional[dict]) -> None:
+        await asyncio.to_thread(write_pending, self.engine, pending_throttles, cid, resource, snapshot)
 
     async def save_action(self, action: Action) -> None:
         """Save action record."""

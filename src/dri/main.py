@@ -3,11 +3,12 @@
 import asyncio
 import signal
 import sys
+import uuid
 from datetime import datetime, timezone
 from typing import Optional
 import docker
 
-from .config import DRIConfig, load_config, watch_config, StorageConfig
+from .config import DRIConfig, load_config, watch_config, StorageConfig, throttle_resource
 from .core.root_cause import RootCauseService
 from .core.llm_client import OllamaClient
 from .core.log_analyzer import LogAnalyzer, summary
@@ -162,7 +163,8 @@ class DRIAgent:
             await self.webhook_dispatcher.init_session()
 
             # Action handlers
-            self.throttle_action = ThrottleAction(self.docker_client)
+            self.throttle_action = ThrottleAction(self.docker_client, storage=self.storage)
+            await self.throttle_action.initialize()
             self.isolate_action = IsolateAction(self.docker_client)
             self.heal_action = HealAction(self.docker_client, self.webhook_dispatcher)
 
@@ -323,12 +325,13 @@ class DRIAgent:
                         for alert in alerts:
                             await self._handle_alert_action(alert)
 
+                    await self._restore_cleared_throttles(metrics)
+
                     # P0-3: OOM prediction — emit a warning alert when risk is critical
                     if self.heal_action:
                         try:
                             oom = await self.heal_action.predict_oom(metrics)
                             if oom.get("risk_level") == "critical":
-                                import uuid
                                 from .utils.metrics import Alert
                                 warn_alert = Alert(
                                     alert_id=str(uuid.uuid4()),
@@ -350,6 +353,25 @@ class DRIAgent:
             except Exception as e:
                 logger_module.error(f"Policy check error: {e}")
 
+
+    async def _restore_cleared_throttles(self, metrics):
+        if not self.throttle_action:
+            return
+        for cid, resource in list(self.throttle_action.pending):
+            if cid != metrics.container_id or self.policy_engine.throttle_breached(metrics, resource):
+                continue
+            result = await self.throttle_action.restore(cid, resource)
+            if result["success"]:
+                # A new episode may begin inside the previous action cooldown.
+                for key in list(self._action_cooldowns):
+                    if key[:2] == (cid, "throttle") and throttle_resource(key[2]) == resource:
+                        del self._action_cooldowns[key]
+            await self.storage.save_action(Action(
+                action_id=str(uuid.uuid4()), container_id=cid, container_name=metrics.container_name,
+                timestamp=datetime.now(timezone.utc).replace(tzinfo=None), action_type="restore",
+                reason=f"{resource} throttle conditions cleared", details=result,
+                success=result["success"], error_message=result.get("error"),
+            ))
 
     async def _handle_alert_action(self, alert) -> None:
         """Handle actions triggered by alerts."""
@@ -384,12 +406,15 @@ class DRIAgent:
                     result = await self.throttle_action.throttle(
                         alert.container_id,
                         self.config.actions.throttle,
+                        metric=alert.metric,
                     )
+                    if result.get("already_applied"):
+                        return
                     action = Action(
                         action_id=str(alert.alert_id),
                         container_id=alert.container_id,
                         container_name=alert.container_name,
-                        timestamp=now,
+                        timestamp=now.replace(tzinfo=None),
                         action_type="throttle",
                         reason=alert.message,
                         details=result,
