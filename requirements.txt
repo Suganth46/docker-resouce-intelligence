@@ -6,8 +6,8 @@ aiohttp>=3.9.0
 
 # Database & Storage
 sqlalchemy>=2.0.0
-influxdb-client>=1.18.0  # optional — only used with influxdb storage backend
-# asyncpg>=0.29.0  # Uncomment to enable TimescaleDB backend (pip install .[timescaledb])
+influxdb-client>=1.18.0  # client library only; InfluxDB export is planned
+# asyncpg>=0.29.0  # driver supplied by the timescaledb extra; see docs/timescaledb-migration.md
 
 # Web Framework & API
 fastapi>=0.104.0

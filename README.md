@@ -1,10 +1,6 @@
 # Docker Resource Intelligence (DRI)
 
-**Your containers, watched over, right-sized, and self-healing, with almost no overhead.**
-
-DRI is a lightweight agent that runs beside your Docker daemon, learns how each container actually behaves, and then helps you keep every workload healthy: it catches noisy neighbors, predicts Out-Of-Memory (OOM) crashes before they happen, and tells you exactly what resource limits each container should have.
-
----
+DRI monitors running Docker containers, flags unusual resource use and recommends CPU and memory limits from observed usage. Its default policies raise warnings. Operators can configure individual rules to throttle, pin or restart a container.
 
 ## Why DRI exists
 
@@ -14,39 +10,26 @@ Anyone who has run more than a handful of containers has met the same three prob
 2. **Surprise OOM kills.** A slow memory leak or a sudden spike takes a service down at 3 a.m. and the only clue is an exit code of 137.
 3. **Guesswork limits.** CPU and memory limits are usually copied from a blog post or set to "something big", so teams either overpay for idle capacity or get throttled and killed.
 
-Full observability stacks can answer these questions, but they are heavy to deploy and they mostly *show* you graphs. You still have to interpret them and act.
-
-**DRI was built to close that gap with one small agent that observes, decides, and acts:**
-
-- It **measures** every container in real time.
-- It **understands** behavior using moving averages, statistical anomaly detection, leak detection, and forecasting.
-- It **recommends** right-sized limits based on real p95 usage, not guesses.
-- It **acts** by throttling, isolating, or gracefully restarting containers, and notifying you through webhooks, so problems are fixed before they become incidents.
-
-The goal is simple: **fewer pages, fewer wasted resources, and more confidence in your Docker hosts.**
-
----
-
 ## What you get
 
-- **Real-Time Metrics**: CPU, memory, network, block I/O, and PIDs streamed from every running container, collected in parallel so one slow container never blocks the rest.
-- **Trend Awareness**: 5, 15, and 60-minute moving averages backed by a memory + database hybrid, so long windows stay accurate.
-- **Smart Anomaly Detection**: per-container z-score analysis, memory growth-rate spikes, and OOM prediction *before* the kill happens.
+- **Real-Time Metrics**: CPU, memory, network, block I/O and PID counts sampled in parallel from running containers.
+- **Trend Awareness**: 5, 15, and 60-minute moving averages calculated from available samples in memory and storage.
+- **Smart Anomaly Detection**: per-container z-score analysis, memory growth-rate spikes, and warnings when memory usage or growth indicates OOM risk.
 - **Right-Sizing Recommendations**: p95-based CPU and memory limits with a configurable safety margin, confidence tiers, data-completeness reporting, idle (scale-to-zero) detection, and restart-aware memory-leak detection.
-- **Usage Forecasting**: project CPU or memory up to 7 days ahead with confidence intervals (Holt’s linear trend method, or linear regression as a zero-dependency fallback).
-- **Policy Engine**: YAML rules with durations, per-image and per-container overrides, and hot-reload.
+- **Usage Forecasting**: project CPU or memory up to 7 days ahead with confidence intervals (Holt’s linear trend method, or linear regression as the fallback).
+- **Policy Engine**: global YAML rules and additional rules selected by image pattern or container ID. Rules can require a sustained breach. Restart the agent to apply YAML changes.
 - **Automated Actions**:
-  - **Throttle**: reduce CPU shares/quota and memory limits on offending containers
+  - **Throttle**: tighten limits for the resource that triggered the rule and restore them when the condition clears
   - **Isolate**: pin containers to specific CPU sets
-  - **Heal**: gracefully restart containers before they crash
-  - **Webhooks**: trigger custom HTTP callbacks, protected by a circuit breaker so a dead endpoint is never hammered
+  - **Heal**: stop and start a container when a configured restart rule fires
+  - **Webhooks**: trigger custom HTTP callbacks, protected by a circuit breaker that pauses delivery after repeated failures
 - **Log Intelligence** groups masked container logs into templates and correlates error patterns with Docker events and resource metrics. [Evidence and verdict rules](docs/log-intelligence.md)
 - **Docker Event Tracking**: OOM, die, start, stop, create, and destroy events, plus automatic restart counting.
 - **Container Lifecycle Awareness**: stopped containers are flagged and cleanly evicted after a grace period.
 - **Modern Dashboard**: a React + Vite control-tower UI with seven live views.
-- **REST API**: FastAPI with optional API-key auth, structured JSON errors, and cached recommendations/forecasts for instant responses.
-- **Prometheus Integration**: export agent metrics to Prometheus / Grafana.
-- **Pluggable Storage**: SQLite by default (zero setup), TimescaleDB for production-scale history, optional InfluxDB export.
+- **REST API**: FastAPI with optional API-key auth, structured JSON errors, and cached recommendations and forecasts.
+- **Prometheus Integration**: scrape API request counts and latency plus the Python client’s default runtime metrics at `/metrics`. Container CPU, memory and I/O readings are available as JSON at `/api/v1/metrics`.
+- **Pluggable Storage**: SQLite by default or TimescaleDB with a PostgreSQL connection.
 
 ---
 
@@ -76,7 +59,7 @@ Actions (Throttle / Isolate / Heal / Webhooks)
 HTTP API (FastAPI :8000)  -->  Dashboard (Vite :5173)
     |
     v
-Prometheus Metrics (:9090)
+Prometheus (:9090) scrapes the API at :8000/metrics
 ```
 
 ---
@@ -87,9 +70,9 @@ Prometheus Metrics (:9090)
 |---|---|
 | Python | 3.9 or newer |
 | Docker Desktop / Engine | 20.10 or newer |
-| Node.js (dashboard only) | 18 or newer |
+| Node.js (dashboard only) | 20.19+ on Node 20, or 22.12+ |
 
-> **Windows note**: Docker Desktop must be running before starting the agent. `uvloop` is Linux-only and is automatically skipped on Windows.
+> **Windows note**: Docker Desktop must be running before starting the agent.
 
 ---
 
@@ -127,7 +110,7 @@ docker-resouce-intelligence/
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/murali2277/docker-resouce-intelligence.git
+git clone https://github.com/Suganth46/docker-resouce-intelligence.git
 cd docker-resouce-intelligence
 ```
 
@@ -141,22 +124,12 @@ python -m venv .venv
 # macOS / Linux
 source .venv/bin/activate
 
-pip install -r requirements.txt
+python -m pip install -e .
 ```
 
-### 3. Start Prometheus (optional but recommended)
+### 3. Run the DRI agent
 
-```bash
-cd deployment
-docker-compose up -d prometheus
-cd ..
-```
-
-Prometheus will be available at **http://localhost:9090**.
-
-### 4. Run the DRI agent
-
-From the project root:
+From the project root, set `storage.sqlite_path` in `config/config.yaml` to a writable location such as `metrics.db`, then run
 
 ```bash
 python -m dri.main --config config/config.yaml
@@ -178,7 +151,7 @@ Expected startup output:
 
 The REST API is now live at **http://localhost:8000** (interactive docs at `/docs`).
 
-### 5. Open the dashboard
+### 4. Open the dashboard
 
 In a **separate terminal**:
 
@@ -212,7 +185,7 @@ The polling interval (5–60s) is adjustable from the dashboard's Settings panel
 
 ## Full Docker Deployment
 
-Run the agent, dashboard, Prometheus and local Ollama service as containers:
+As an alternative to the local quick start, run the agent, dashboard, Prometheus and local Ollama service together. The bundled Prometheus configuration scrapes `dri-agent:8000/metrics` on the Compose network.
 
 ```bash
 cd deployment
@@ -225,7 +198,7 @@ docker compose up -d --build
 | DRI Agent API | http://localhost:8000 |
 | Prometheus | http://localhost:9090 |
 
-Stop everything with `docker-compose down`.
+Stop the services with `docker compose down`.
 
 ---
 
@@ -278,7 +251,6 @@ api:
   port: 8000
   enable_cors: true
   allowed_origins: ["*"]    # set explicit origins in production
-  prometheus_metrics: true
   api_key: null             # set a secret to require X-Api-Key
 
 actions:
@@ -358,7 +330,7 @@ By default (`api_key: null`) authentication is off, which keeps local developmen
 | `GET` | `/api/v1/logs/{container_id}` | When configured | Masked recent lines, filtered by minutes, level and limit |
 | `GET` | `/api/v1/containers/{container_id}/explain` | When configured | Heuristic verdict and supporting evidence for a 1–120 minute window |
 | `GET` | `/api/v1/forecast/<container_id>` | When configured | Usage forecast (cached; `?force=true` to recompute) |
-| `GET` | `/metrics` | When configured | Prometheus-format metrics |
+| `GET` | `/metrics` | When configured | API request counter (`dri_api_requests_total`), latency histogram (`dri_api_request_duration_seconds`) and Python client defaults |
 
 ### Quick examples
 
@@ -390,7 +362,7 @@ pytest tests/
 The suite covers the collector, storage, aggregation, policy engine, recommender, forecaster, auth/CORS, Docker events, and API caching. TimescaleDB integration tests run only when `TIMESCALE_TEST_URL` is set:
 
 ```bash
-export TIMESCALE_TEST_URL=postgresql://dri:secret@localhost:5432/dri
+export TIMESCALE_TEST_URL=postgresql+psycopg2://dri:secret@localhost:5432/dri
 pytest tests/test_timescale.py -v
 ```
 
@@ -417,16 +389,10 @@ npm run preview   # preview the production build
 
 ### TimescaleDB (production-scale history)
 
-Switch to TimescaleDB for hypertable partitioning and native retention policies. See [docs/timescaledb-migration.md](docs/timescaledb-migration.md).
+The TimescaleDB backend uses synchronous SQLAlchemy. Install the psycopg2 driver in the agent environment for the documented `postgresql+psycopg2://` URL. The current `timescaledb` package extra installs asyncpg. See the [migration guide](docs/timescaledb-migration.md).
 
 ```bash
-pip install ".[timescaledb]"
-```
-
-### InfluxDB export
-
-```bash
-pip install ".[influxdb]"
+python -m pip install psycopg2-binary
 ```
 
 ### Advanced forecasting (statsmodels)
@@ -436,12 +402,6 @@ pip install ".[forecasting]"
 ```
 
 Enables Holt’s linear trend method; DRI falls back to linear regression when it is not installed.
-
-### uvloop (Linux / macOS)
-
-```bash
-pip install ".[perf]"
-```
 
 ---
 
@@ -467,20 +427,15 @@ policy_check_interval: 15
 
 ---
 
-## Performance Characteristics
+## Capacity planning
 
-| Metric | Value |
-|---|---|
-| Agent memory | ~50–100 MB (scales with container count) |
-| CPU overhead | < 1% on typical workloads (50–100 containers) |
-| Metric latency | Sub-second collection, seconds for aggregation |
-| API response | Recommendations and forecasts served from cache |
-| Storage growth | ~150 bytes/sample; about 18 MB per container per 7 days at 5s sampling |
-
----
+At the default five-second collection interval, seven days of continuous monitoring produces about 120,960 metric samples per container. Disk usage also depends on log volume, indexes and retention settings.
 
 ## Roadmap
 
+- Live configuration reload
+- InfluxDB export (the current `influxdb` extra installs only the client library)
+- Per-container resource metrics in Prometheus format
 - Smarter automated remediation (auto-apply accepted recommendations)
 - Multi-host support with a central dashboard
 - More notification channels (Slack, email, PagerDuty)

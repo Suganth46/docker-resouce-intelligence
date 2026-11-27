@@ -8,9 +8,9 @@ version = "0.1.0"
 description = "Lightweight intelligent monitoring and self-healing agent for Docker container resource optimization"
 readme = "README.md"
 requires-python = ">=3.9"
-license = {text = "MIT"}
+license = {file = "LICENSE"}
 authors = [
-    {name = "DevOps Team", email = "devops@example.com"}
+    {name = "DevOps Team"}
 ]
 keywords = ["docker", "monitoring", "resource-management", "self-healing"]
 classifiers = [
@@ -53,9 +53,9 @@ forecasting = ["statsmodels>=0.14.0"]
 timescaledb = ["asyncpg>=0.29.0"]
 
 [project.urls]
-Homepage = "https://github.com/murali2277/docker-resouce-intelligence"
-Repository = "https://github.com/murali2277/docker-resouce-intelligence.git"
-Documentation = "https://github.com/murali2277/docker-resouce-intelligence/tree/main/docs"
+Homepage = "https://github.com/Suganth46/docker-resouce-intelligence"
+Repository = "https://github.com/Suganth46/docker-resouce-intelligence.git"
+Documentation = "https://github.com/Suganth46/docker-resouce-intelligence/tree/main/docs"
 
 [tool.setuptools.packages.find]
 where = ["src"]

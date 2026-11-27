@@ -8,7 +8,7 @@ FROM python:3.11-slim AS builder
 WORKDIR /build
 
 # Copy project files needed for packaging
-COPY requirements.txt pyproject.toml ./
+COPY requirements.txt pyproject.toml README.md LICENSE ./
 COPY src/ ./src/
 
 # Keep the entire runtime dependency set in the directory copied below.

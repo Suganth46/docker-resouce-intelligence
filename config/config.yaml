@@ -61,6 +61,7 @@ storage:
   # budget ~780 MB for 10 containers at that setting.
   retention_hours: 168   # 7 days — matches the recommender's default lookback
 
+  # Reserved settings for planned InfluxDB export. The agent has no writer yet.
   influxdb_enabled: false
   influxdb_url: "http://influxdb:8086"
   influxdb_token: ""
@@ -70,9 +71,9 @@ storage:
   # TimescaleDB (optional alternative backend — Phase 6 spike)
   # Activate with: docker compose --profile timescale up
   # Then set backend to "timescaledb" and provide a connection URL.
-  # Requires asyncpg:  pip install "docker-resource-intelligence[timescaledb]"
+  # Install psycopg2-binary in the agent environment for the example URL.
   backend: "sqlite"
-  # timescaledb_url: "postgresql://dri:secret@timescaledb:5432/dri"
+  # timescaledb_url: "postgresql+psycopg2://dri:secret@timescaledb:5432/dri"
 
 api:
   host: "0.0.0.0"
@@ -85,7 +86,7 @@ api:
   # When set to specific origins (non-wildcard), allow_credentials is automatically enabled.
   allowed_origins:
     - "*"
-  prometheus_metrics: true
+  prometheus_metrics: true   # Reserved setting. The API always registers /metrics.
   # Optional: When set, all /api/v1/* and /metrics endpoints require X-Api-Key header.
   # Leave null/commented out for local development without authentication.
   # Setting this is strongly recommended for any non-localhost deployment.

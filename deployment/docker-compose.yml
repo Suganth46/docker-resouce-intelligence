@@ -100,11 +100,11 @@ services:
   #
   # Then update config/config.yaml:
   #   storage:
-  #     timescaledb_enabled: true
-  #     timescaledb_url: "postgresql://dri:secret@timescaledb:5432/dri"
+  #     backend: "timescaledb"
+  #     timescaledb_url: "postgresql+psycopg2://dri:secret@timescaledb:5432/dri"
   #
-  # Also install asyncpg in the DRI container:
-  #   pip install "docker-resource-intelligence[timescaledb]"
+  # Also install the synchronous driver in the DRI image:
+  #   pip install psycopg2-binary
   # ---------------------------------------------------------------------------
   timescaledb:
     image: timescale/timescaledb:latest-pg16

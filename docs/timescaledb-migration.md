@@ -34,20 +34,20 @@ The application reads the storage backend from `config/config.yaml`. To enable T
 ```yaml
 storage:
   backend: "timescaledb"
-  timescaledb_url: "postgresql://dri:secret@localhost:5432/dri"
+  timescaledb_url: "postgresql+psycopg2://dri:secret@localhost:5432/dri"
   retention_hours: 168 # 7 days
 ```
 
 ### Connection String Format
 The `timescaledb_url` must follow the standard SQLAlchemy PostgreSQL connection string format:
-`postgresql://[user]:[password]@[host]:[port]/[dbname]`
+`postgresql+psycopg2://[user]:[password]@[host]:[port]/[dbname]`
 
 ## 3. Dependencies
-The TimescaleDB backend uses SQLAlchemy with the default `psycopg2` driver. Ensure you have the required dependencies installed (e.g., via the extra in your `pyproject.toml` or `requirements.txt`):
+Install the synchronous driver selected by the URL above in the same environment as the agent.
+
 ```bash
-pip install psycopg2-binary
+python -m pip install psycopg2-binary
 ```
-*(Or ensure you install the package with the `[timescaledb]` extra if configured).*
 
 ## Note on Data Migration
 This switch **does not automatically migrate** existing data from SQLite to TimescaleDB. When you restart the agent with TimescaleDB enabled, it will begin collecting and storing new metrics in TimescaleDB. Old metrics in SQLite will remain untouched in your configured `sqlite_path`. If data backfill is required, it must be performed manually.

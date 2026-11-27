@@ -81,7 +81,7 @@ class StorageConfig(BaseModel):
     # Must be >= recommender lookback_days * 24; default matches 7-day lookback.
     retention_hours: int = 168
 
-    # InfluxDB (legacy optional integration)
+    # Reserved for planned InfluxDB export.
     influxdb_enabled: bool = False
     influxdb_url: Optional[str] = None
     influxdb_token: Optional[str] = None
@@ -90,9 +90,9 @@ class StorageConfig(BaseModel):
 
     # TimescaleDB (optional alternative backend — Phase 6 spike)
     # Enable by setting backend: "timescaledb" and providing a DSN.
-    # Requires: pip install "docker-resource-intelligence[timescaledb]"
+    # The example DSN requires psycopg2 in the agent environment.
     #
-    # Example DSN: "postgresql://dri:secret@timescaledb:5432/dri"
+    # Example DSN: "postgresql+psycopg2://dri:secret@timescaledb:5432/dri"
     timescaledb_url: Optional[str] = None
 
     @field_validator("backend")
