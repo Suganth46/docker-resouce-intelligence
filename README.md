@@ -2,6 +2,8 @@
 
 DRI monitors running Docker containers, flags unusual resource use and recommends CPU and memory limits from observed usage. Its default policies raise warnings. Operators can configure individual rules to throttle, pin or restart a container.
 
+New to the project? Pick a first issue, run a backend test without Docker, or build the dashboard. [Contributor guide](CONTRIBUTING.md)
+
 ## Why DRI exists
 
 Anyone who has run more than a handful of containers has met the same three problems:
@@ -359,7 +361,7 @@ pip install -e ".[dev]"
 pytest tests/
 ```
 
-The suite covers the collector, storage, aggregation, policy engine, recommender, forecaster, auth/CORS, Docker events, and API caching. TimescaleDB integration tests run only when `TIMESCALE_TEST_URL` is set:
+The suite covers the collector, storage, aggregation, policy engine, recommender, forecaster, auth/CORS, Docker events, and API caching. TimescaleDB integration tests run only when `TIMESCALE_TEST_URL` is set. Point it at a disposable test database because the fixtures drop tables after use.
 
 ```bash
 export TIMESCALE_TEST_URL=postgresql+psycopg2://dri:secret@localhost:5432/dri
@@ -447,11 +449,7 @@ Ideas and contributions are very welcome.
 
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feat/my-feature`
-3. Add tests for new functionality
-4. Run the full test suite: `pytest tests/`
-5. Submit a pull request
+For a first contribution, follow the fork-to-pull-request walkthrough. It includes separate setup paths for Python, the dashboard and documentation. [Contributing guide](CONTRIBUTING.md) · [Good first issues](https://github.com/Suganth46/docker-resouce-intelligence/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22)
 
 ---
 
