@@ -77,7 +77,7 @@ export function LogEvidence({ containerId }: Props) {
             <td><code>{row.first_seen.replace('T', ' ').slice(0, 19)}</code></td>
           </tr>)}</tbody>
         </table>
-      </div> : <p>No log templates observed in the last {data.window_minutes} minutes.</p>}
+      </div> : data.coverage.log_lines_in_window > 0 ? <p>Template history is unavailable for these log lines.</p> : <p>No log templates observed in the last {data.window_minutes} minutes.</p>}
       <details onToggle={e => setExpanded(e.currentTarget.open)}>
         <summary>Recent error lines</summary>
         {expanded && <RecentErrors containerId={containerId} />}

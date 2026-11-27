@@ -12,6 +12,9 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 
+from .log_window import LogWindow
+
+
 class StorageBackend(ABC):
     """Abstract storage interface for DRI metrics, alerts, actions, and caches."""
 
@@ -176,6 +179,10 @@ class StorageBackend(ABC):
     @abstractmethod
     async def save_logs(self, entries: List[Dict[str, Any]]) -> None:
         """Persist a batch of sanitized log events."""
+
+    @abstractmethod
+    async def get_log_window(self, container_id: str, since: datetime, until: datetime) -> LogWindow:
+        """Count all persisted lines and errors, and return bounded template and message evidence."""
 
     @abstractmethod
     async def get_recent_logs(self, container_id: str, minutes: int = 15, level: Optional[str] = None, limit: int = 500) -> List[Any]:

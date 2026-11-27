@@ -4,7 +4,7 @@ The agent follows each running container on a dedicated Docker stream thread. It
 
 Each stored row includes the ID of its normalized template. The analyzer keeps up to 500 templates per container in memory. SQLite and TimescaleDB retain the masked rows for 24 hours by default. Templates and statistical history start fresh when the agent restarts.
 
-The container detail page polls the explanation every 30 seconds. The default window is ten minutes. Counts use minute buckets, so the oldest bucket can include part of the preceding minute. The analyzer reads up to 100 lifecycle events and 50 masked log samples. After restart, samples supply a lower bound on the number of matching lines. Missing resource readings appear as null.
+The container detail page polls the explanation every 30 seconds. The default window is ten minutes. Counts use minute buckets, so the oldest bucket can include part of the preceding minute. The analyzer reads up to 100 lifecycle events and 50 masked log samples. After restart, database aggregates supply window totals for lines and errors and the ten most frequent stored template IDs. Stored rows without a template ID also count toward coverage. Pattern matches in sampled messages remain a lower bound. Missing resource readings appear as null.
 
 ## Heuristic verdicts
 

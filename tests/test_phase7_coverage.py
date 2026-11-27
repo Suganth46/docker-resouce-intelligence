@@ -50,3 +50,61 @@ async def test_metrics_remain_visible_when_log_collection_disabled(monkeypatch):
     result = await routes.explain_container("app", 10)
     assert result.verdict == "cpu_saturation"
     assert result.coverage["logs_status"] == "disabled"
+
+
+async def test_restart_preserves_window_coverage_and_top_templates():
+    from dri.core.storage import SqliteStorage
+
+    store = SqliteStorage(":memory:")
+    await store.init()
+    try:
+        await assert_restart_coverage(store)
+    finally:
+        await store.close()
+
+
+async def assert_restart_coverage(store):
+    from datetime import timedelta
+    from dri.core.log_parser import utcnow
+
+    now = utcnow()
+    live = LogAnalyzer(storage=store, now_fn=lambda: now)
+    entries = []
+    for i in range(120):
+        row = dict(container_id="app", timestamp=now - timedelta(seconds=120-i),
+                   level="INFO", message="INFO ready" if i < 70 else "INFO stopped")
+        live.ingest(row)
+        entries.append(row)
+    await store.save_logs(entries + [
+        dict(entries[0], container_id="other"),
+        dict(entries[0], timestamp=now - timedelta(minutes=11)),
+        dict(entries[0], timestamp=now + timedelta(minutes=1)),
+    ])
+    fresh = LogAnalyzer(storage=store, now_fn=lambda: now)
+    for analyzer in (live, fresh):
+        report = await analyzer.explain("app")
+        assert report.coverage["log_lines_in_window"] == 120
+        assert [(t["template"], t["count"]) for t in report.top_templates] == [
+            ("INFO ready", 70), ("INFO stopped", 50)
+        ]
+    assert not (await fresh.explain("app")).new_templates
+
+
+async def test_older_errors_without_template_ids_count_beyond_the_sample():
+    from datetime import timedelta
+    from dri.core.log_parser import utcnow
+    from dri.core.storage import SqliteStorage
+
+    store = SqliteStorage(":memory:")
+    await store.init()
+    try:
+        now = utcnow()
+        old = dict(container_id="app", timestamp=now - timedelta(minutes=1),
+                   level="ERROR", message="failure")
+        await store.save_logs([old] * 60 + [dict(old, timestamp=now, level="INFO")] * 50)
+        report = await LogAnalyzer(storage=store, now_fn=lambda: now).explain("app")
+        assert report.coverage["log_lines_in_window"] == 110
+        assert report.error_count == 60
+        assert report.top_templates == []
+    finally:
+        await store.close()

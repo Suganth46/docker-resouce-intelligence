@@ -22,6 +22,7 @@ from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
 from ..utils.logger import get_logger
 from ..utils.metrics import ContainerMetrics, Alert, Action
+from .log_window import LogWindow, read_log_window
 from .storage_base import StorageBackend
 
 logger = get_logger("storage_timescale")
@@ -224,6 +225,11 @@ class TimescaleStorage(StorageBackend):
         except Exception as exc:
             # Database exceptions may embed bind parameters containing log text.
             logger.error("Failed to save log batch (%s)", type(exc).__name__)
+
+    async def get_log_window(self, container_id: str, since: datetime, until: datetime) -> LogWindow:
+        return await asyncio.get_running_loop().run_in_executor(
+            None, read_log_window, self.SessionLocal, LogRecord, container_id, since, until
+        )
 
     async def get_recent_logs(self, container_id: str, minutes: int = 15, level: Optional[str] = None, limit: int = 500) -> List[Any]:
         cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=minutes)

@@ -14,6 +14,7 @@ from dri.config import DRIConfig
 from dri.core.aggregator import MetricsAggregator
 from dri.core.engine import PolicyEngine
 from dri.core.log_analyzer import LogAnalyzer, summary
+from dri.core.log_window import LogWindow
 from dri.core.log_parser import utcnow
 from dri.core.storage import SqliteStorage
 from dri.main import DRIAgent
@@ -25,7 +26,7 @@ def event(action, **attrs):
 
 async def report(events=(), lines=(), memory=30):
     storage = AsyncMock()
-    storage.get_recent_logs.return_value = []
+    storage.get_log_window.return_value = LogWindow()
     storage.get_recent_events.return_value = events
     analyzer = LogAnalyzer(storage=storage)
     for line in lines:

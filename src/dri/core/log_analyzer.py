@@ -399,25 +399,38 @@ class LogAnalyzer:
                             sample=record.sample_message,
                         )
 
+        # Only the live store knows when a template was first observed outside this window.
+        live_new = {key for key, row in templates.items() if row["first_seen"] >= since}
         events = []
         if self.storage is not None:
-            rows = await self.storage.get_recent_logs(
-                container_id, minutes=window_minutes, limit=50
-            )
+            persisted = await self.storage.get_log_window(container_id, since, now)
+            for row in persisted.templates:
+                key = row["template_id"]
+                if key in templates:
+                    templates[key]["count"] = max(templates[key]["count"], row["count"])
+                    templates[key]["first_seen"] = min(
+                        templates[key]["first_seen"], row["first_seen"]
+                    )
+                    if row["level"] == "ERROR" or (
+                        row["level"] == "WARN" and templates[key]["level"] != "ERROR"
+                    ):
+                        templates[key]["level"] = row["level"]
+                else:
+                    templates[key] = dict(row, template=normalize_template(row["sample"]))
+
             sampled_signals = Counter()
-            sampled_errors = sampled_dependencies = 0
-            for row in rows:
+            sampled_dependencies = 0
+            for row in persisted.samples:
                 matches = self._signals(row.message)
                 sampled_signals.update(matches)
-                sampled_errors += row.level == "ERROR"
                 sampled_dependencies += bool(matches.intersection(DEPENDENCIES))
                 if row.template_id in templates:
                     templates[row.template_id]["sample"] = row.message
             # The persisted sample overlaps live counters. Take a lower bound
             # from each source without counting the same lines twice.
-            lines = max(lines, len(rows))
+            lines = max(lines, persisted.lines)
             signals |= sampled_signals
-            errors = max(errors, sampled_errors)
+            errors = max(errors, persisted.errors)
             dependency_lines = max(dependency_lines, sampled_dependencies)
             for event in await self.storage.get_recent_events(container_id=container_id, limit=100):
                 ts = event.timestamp
@@ -445,7 +458,7 @@ class LogAnalyzer:
             now,
             errors,
             ordered[:10],
-            [t for t in ordered if t["first_seen"] >= since],
+            [t for t in ordered if t["template_id"] in live_new],
             dict(signals),
             events,
             context,

@@ -487,3 +487,10 @@ async def test_log_batch_filter_and_retention(storage):
     from tests.test_phase7a_logs import check_storage
 
     await check_storage(storage)
+
+
+@pytest.mark.timescale
+async def test_log_evidence_after_restart(storage):
+    from tests.test_phase7_coverage import assert_restart_coverage
+
+    await assert_restart_coverage(storage)
