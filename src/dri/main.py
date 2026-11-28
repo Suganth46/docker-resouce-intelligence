@@ -101,6 +101,7 @@ class DRIAgent:
         self._excluded_action_ids = set()
         self._action_cooldowns: dict[tuple, datetime] = {}
         self._ACTION_COOLDOWN_SECONDS: int = 120  # 2 minutes between repeats
+        self._oom_last_alerted: dict[str, datetime] = {}
 
     @property
     def metrics_processed(self) -> int:
@@ -212,7 +213,13 @@ class DRIAgent:
 
         # Save to storage
         if self.storage:
-            await self.storage.save_alert(alert)
+            try:
+                await self.storage.save_alert(alert)
+            except Exception:
+                cid = alert.container_id
+                if self._oom_last_alerted.get(cid) == alert.timestamp:
+                    self._oom_last_alerted.pop(cid, None)
+                raise
 
     async def _on_docker_event(self, event) -> None:
         """Handle Docker events.
@@ -253,6 +260,7 @@ class DRIAgent:
             self.aggregator.mark_container_stopped(container_id)
         if self.policy_engine:
             self.policy_engine.clear_violations(container_id)
+        self._oom_last_alerted.pop(container_id, None)
 
     async def _collect_metrics_loop(self) -> None:
         """Continuously collect metrics."""
@@ -332,6 +340,7 @@ class DRIAgent:
                 for container_id, metrics in all_metrics.items():
                     if metrics.container_status != "running" or self.aggregator.is_container_stopped(container_id):
                         self.policy_engine.clear_violations(container_id)
+                        self._oom_last_alerted.pop(container_id, None)
                         continue
                     alerts = await self.policy_engine.evaluate(metrics)
                     if alerts:
@@ -340,34 +349,57 @@ class DRIAgent:
                             await self._handle_alert_action(alert)
 
                     if self.aggregator.is_container_stopped(container_id):
+                        self._oom_last_alerted.pop(container_id, None)
                         continue
                     await self._restore_cleared_throttles(metrics)
-
-                    # P0-3: OOM prediction — emit a warning alert when risk is critical
-                    if self.heal_action:
-                        try:
-                            oom = await self.heal_action.predict_oom(metrics)
-                            if oom.get("risk_level") == "critical":
-                                from .utils.metrics import Alert
-                                warn_alert = Alert(
-                                    alert_id=str(uuid.uuid4()),
-                                    container_id=metrics.container_id,
-                                    container_name=metrics.container_name,
-                                    timestamp=datetime.now(timezone.utc),
-                                    alert_type="warning",
-                                    metric="memory_percent",
-                                    current_value=metrics.memory_percent,
-                                    threshold=95.0,
-                                    message=oom.get("reason", "OOM risk critical"),
-                                )
-                                await self._on_alert(warn_alert)
-                        except Exception as oom_exc:
-                            logger_module.error(
-                                f"OOM prediction error for {container_id}: {oom_exc}"
-                            )
+                    if self.aggregator.is_container_stopped(container_id):
+                        self._oom_last_alerted.pop(container_id, None)
+                        continue
+                    await self._check_oom_prediction(metrics)
 
             except Exception as e:
                 logger_module.error(f"Policy check error: {e}")
+
+    async def _check_oom_prediction(self, metrics) -> None:
+        """Emit a deduplicated warning alert when OOM risk is critical."""
+        if not self.heal_action:
+            return
+        cid = metrics.container_id
+        try:
+            oom = await self.heal_action.predict_oom(metrics)
+            if oom.get("risk_level") != "critical":
+                self._oom_last_alerted.pop(cid, None)
+                return
+
+            now = datetime.now(timezone.utc)
+            renotify_seconds: int = getattr(self.config, "alert_renotify_seconds", 300)
+            last_fired = self._oom_last_alerted.get(cid)
+            if (
+                last_fired is not None
+                and renotify_seconds > 0
+                and (now - last_fired).total_seconds() < renotify_seconds
+            ):
+                return
+
+            from .utils.metrics import Alert
+
+            warn_alert = Alert(
+                alert_id=str(uuid.uuid4()),
+                container_id=cid,
+                container_name=metrics.container_name,
+                timestamp=now,
+                alert_type="warning",
+                metric="memory_percent",
+                current_value=metrics.memory_percent,
+                threshold=95.0,
+                message=oom.get("reason", "OOM risk critical"),
+            )
+            self._oom_last_alerted[cid] = now
+            await self._on_alert(warn_alert)
+        except Exception as oom_exc:
+            logger_module.error(
+                f"OOM prediction error for {cid}: {oom_exc}"
+            )
 
 
     async def _restore_cleared_throttles(self, metrics):

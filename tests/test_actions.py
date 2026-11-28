@@ -573,6 +573,36 @@ async def test_stopped_window_emits_no_alerts_or_actions():
     agent._restore_cleared_throttles.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_stop_during_throttle_restore_skips_oom_prediction():
+    from tests.test_engine_dedup import _make_agg_metrics
+
+    agent = _make_agent()
+    metrics = _make_agg_metrics(container_id="crit001", memory_percent=97.0)
+    agent.aggregator = AsyncMock()
+    agent.aggregator.aggregate_all = AsyncMock(return_value={"crit001": metrics})
+    stopped = False
+    agent.aggregator.is_container_stopped = MagicMock(side_effect=lambda _cid: stopped)
+    agent.policy_engine = AsyncMock()
+    agent.policy_engine.evaluate = AsyncMock(return_value=[])
+
+    async def stop_during_restore(_metrics):
+        nonlocal stopped
+        stopped = True
+
+    agent._restore_cleared_throttles = AsyncMock(side_effect=stop_during_restore)
+
+    async def last_tick(_):
+        agent.running = False
+
+    agent.running = True
+    with patch("asyncio.sleep", side_effect=last_tick):
+        await agent._policy_check_loop()
+
+    agent._restore_cleared_throttles.assert_awaited_once_with(metrics)
+    agent.heal_action.predict_oom.assert_not_awaited()
+
+
 async def test_first_status_poll_recognizes_exited_window():
     from dri.core.aggregator import MetricsAggregator
     from tests.test_engine_dedup import _make_agg_metrics, _make_engine
@@ -615,3 +645,135 @@ async def test_stop_during_alert_callback_blocks_restart_dispatch():
     await agent._handle_alert_action(alert)
     agent.heal_action.graceful_restart.assert_not_awaited()
     agent.storage.save_action.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_oom_prediction_deduplicates_alerts_across_ticks():
+    """Repeated critical OOM ticks emit one alert until renotify, recovery, or stop."""
+    from dri.actions.heal import HealAction
+    from dri.core.engine import PolicyEngine
+    from dri.events.listener import ContainerEvent
+    from tests.test_engine_dedup import _make_agg_metrics
+
+    agent = _make_agent()
+    agent.config.alert_renotify_seconds = 300
+    agent.policy_engine = PolicyEngine(agent.config)
+    agent.heal_action = HealAction(_make_docker_client(_make_container()))
+    agent.storage.save_alert = AsyncMock()
+    agent._restore_cleared_throttles = AsyncMock()
+
+    critical = _make_agg_metrics(container_id="crit001", memory_percent=97.0)
+    other = _make_agg_metrics(container_id="crit002", memory_percent=97.0)
+    recovered = _make_agg_metrics(container_id="crit001", memory_percent=70.0)
+
+    snapshots = [
+        {"crit001": critical, "crit002": other},
+        {"crit001": critical, "crit002": other},
+        {"crit001": critical},
+        {"crit001": recovered},
+        {"crit001": critical},
+        {"crit001": critical},
+    ]
+    tick_times = [0, 10, 301, 311, 321, 331]
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    tick = 0
+
+    mock_aggregator = AsyncMock()
+    mock_aggregator.is_container_stopped = MagicMock(return_value=False)
+    mock_aggregator.mark_container_stopped = MagicMock()
+    mock_aggregator.unmark_container_stopped = MagicMock()
+    mock_aggregator.update_restart_count = MagicMock()
+    agent.aggregator = mock_aggregator
+
+    async def record_alert(alert):
+        await agent.storage.save_alert(alert)
+
+    agent._on_alert = AsyncMock(side_effect=record_alert)
+    agent.running = True
+
+    with patch("dri.main.datetime") as clock:
+        # Drive exact iterations by flipping running False on the final tick.
+        async def drive_sleep(_):
+            clock.now.return_value = start + timedelta(seconds=tick_times[tick])
+            if tick == len(snapshots) - 1:
+                agent.running = False
+
+        async def aggregate_and_advance():
+            nonlocal tick
+            data = snapshots[tick]
+            tick += 1
+            return data
+
+        mock_aggregator.aggregate_all = aggregate_and_advance
+        with patch("asyncio.sleep", side_effect=drive_sleep):
+            await agent._policy_check_loop()
+
+    # crit001: tick0 (1), tick1 suppressed, tick2 renotified at 301s (2),
+    # tick3 cleared, tick4 re-armed (3), tick5 suppressed -> 3 alerts for crit001 + 1 for crit002.
+    saved_alerts = [c.args[0] for c in agent.storage.save_alert.await_args_list]
+    assert [a.container_id for a in saved_alerts] == ["crit001", "crit002", "crit001", "crit001"]
+
+    # Stopping the container clears the active OOM episode so a restart fires immediately.
+    await agent._on_docker_event(ContainerEvent({"Action": "stop", "Actor": {"ID": "crit001"}}))
+    with patch("dri.main.datetime") as clock:
+        clock.now.return_value = start + timedelta(seconds=335)
+        await agent._check_oom_prediction(critical)
+    assert agent.storage.save_alert.await_count == 5
+
+
+@pytest.mark.asyncio
+async def test_oom_prediction_renotify_zero_disables_dedup():
+    """Setting alert_renotify_seconds=0 disables OOM alert suppression."""
+    from dri.actions.heal import HealAction
+    from tests.test_engine_dedup import _make_agg_metrics
+
+    agent = _make_agent()
+    agent.config.alert_renotify_seconds = 0
+    agent.heal_action = HealAction(_make_docker_client(_make_container()))
+    agent._on_alert = AsyncMock()
+    critical = _make_agg_metrics(container_id="crit001", memory_percent=97.0)
+
+    await agent._check_oom_prediction(critical)
+    await agent._check_oom_prediction(critical)
+    assert agent._on_alert.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_failed_oom_alert_save_clears_only_its_provisional_timestamp():
+    from dri.utils.metrics import Alert
+
+    agent = _make_agent()
+    cid = "crit001"
+    timestamp = datetime.now(timezone.utc)
+    alert = Alert(
+        alert_id="alert-oom",
+        container_id=cid,
+        container_name="critical-container",
+        timestamp=timestamp,
+        alert_type="warning",
+        metric="memory_percent",
+        current_value=97.0,
+        threshold=95.0,
+        message="OOM risk critical",
+    )
+
+    async def fail_save(_alert):
+        raise RuntimeError("storage unavailable")
+
+    agent.storage.save_alert = AsyncMock(side_effect=fail_save)
+    agent._oom_last_alerted[cid] = timestamp
+    with pytest.raises(RuntimeError, match="storage unavailable"):
+        await agent._on_alert(alert)
+    assert cid not in agent._oom_last_alerted
+
+    newer_timestamp = timestamp + timedelta(seconds=1)
+
+    async def replace_then_fail(_alert):
+        agent._oom_last_alerted[cid] = newer_timestamp
+        raise RuntimeError("storage unavailable")
+
+    agent.storage.save_alert = AsyncMock(side_effect=replace_then_fail)
+    agent._oom_last_alerted[cid] = timestamp
+    with pytest.raises(RuntimeError, match="storage unavailable"):
+        await agent._on_alert(alert)
+    assert agent._oom_last_alerted[cid] == newer_timestamp
