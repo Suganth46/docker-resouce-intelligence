@@ -237,7 +237,7 @@ async def test_policy_engine_memory_growth_rate_5m_triggers_alert():
     from datetime import datetime, timezone
 
     rule = ThresholdRule(metric="memory_growth_rate_5m", operator=">", value=20.0, duration_seconds=0, action="warning")
-    policy = ContainerPolicy(name="test", enabled=True, selector={"image": "*"}, rules=[rule])
+    policy = ContainerPolicy(name="test", enabled=True, rules=[rule])
     config = DRIConfig(global_policy=policy)
     engine = PolicyEngine(config)
 
@@ -265,44 +265,6 @@ async def test_policy_engine_memory_growth_rate_5m_triggers_alert():
     assert alerts[0].metric == "memory_growth_rate_5m"
     assert alerts[0].current_value == 25.0
 
-
-
-@pytest.mark.asyncio
-async def test_policy_engine_typo_metric_logs_warning(caplog):
-    """Test that a typo in metric name produces a logged warning once."""
-    from dri.core.engine import PolicyEngine
-    from dri.config import DRIConfig, ContainerPolicy, ThresholdRule
-    from dri.utils.metrics import AggregatedMetrics
-    from datetime import datetime, timezone
-
-    rule = ThresholdRule(metric="typo_metric", operator=">", value=20.0, duration_seconds=0, action="warning")
-    policy = ContainerPolicy(name="test", enabled=True, selector={"image": "*"}, rules=[rule])
-    config = DRIConfig(global_policy=policy)
-    engine = PolicyEngine(config)
-
-    metrics = AggregatedMetrics(
-        container_id="test1",
-        container_name="test_container",
-        timestamp=datetime.now(timezone.utc),
-        cpu_percent=0.0,
-        cpu_percent_5m=0.0,
-        cpu_percent_15m=0.0,
-        cpu_percent_60m=0.0,
-        memory_percent=0.0,
-        memory_percent_5m=0.0,
-        memory_percent_15m=0.0,
-        memory_percent_60m=0.0,
-        memory_growth_rate_1m=0.0,
-        memory_growth_rate_5m=0.0
-    )
-
-    # Evaluate multiple times
-    await engine.evaluate(metrics)
-    await engine.evaluate(metrics)
-
-    warnings = [r.message for r in caplog.records if r.levelname == "WARNING"]
-    assert len(warnings) == 1
-    assert "Unknown metric 'typo_metric'" in warnings[0]
 
 
 # ---------------------------------------------------------------------------

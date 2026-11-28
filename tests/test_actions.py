@@ -11,6 +11,8 @@ Covers:
   - Per-container/rule cooldown prevents repeat firing (P0-2)
 """
 
+import asyncio
+
 import pytest
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch, call
@@ -304,15 +306,26 @@ async def test_warning_alert_does_nothing():
 
 # --- P0-3: predict_oom wired into _policy_check_loop ---
 
+async def _run_one_policy_tick(agent):
+    ticks = 0
+
+    async def interval(_):
+        nonlocal ticks
+        if ticks:
+            await asyncio.gather(*agent._policy_tasks.values())
+            agent.running = False
+        ticks += 1
+
+    agent.running = True
+    with patch("asyncio.sleep", side_effect=interval):
+        await agent._policy_check_loop()
+
+
 @pytest.mark.asyncio
 async def test_policy_check_loop_calls_predict_oom_and_emits_warning_alert():
     """P0-3: _policy_check_loop must call heal_action.predict_oom for each container
     and emit a 'warning' alert (via _on_alert) when risk_level is 'critical'.
-    The test calls _policy_check_loop directly with running=False so only one
-    iteration executes (the first asyncio.sleep is patched to return immediately
-    and then running is set False to exit the while-loop).
     """
-    import asyncio
     from dri.main import DRIAgent
     from dri.config import DRIConfig
     from dri.utils.metrics import AggregatedMetrics
@@ -364,13 +377,7 @@ async def test_policy_check_loop_calls_predict_oom_and_emits_warning_alert():
 
     agent._on_alert = fake_on_alert
 
-    # Patch asyncio.sleep so the loop body executes once then stops
-    async def sleep_then_stop(_):
-        agent.running = False
-
-    agent.running = True
-    with patch("asyncio.sleep", side_effect=sleep_then_stop):
-        await agent._policy_check_loop()
+    await _run_one_policy_tick(agent)
 
     # predict_oom MUST have been called by _policy_check_loop
     agent.heal_action.predict_oom.assert_called_once_with(critical_metrics)
@@ -558,12 +565,7 @@ async def test_stopped_window_emits_no_alerts_or_actions():
     agent.heal_action.predict_oom.return_value = {"risk_level": "critical", "reason": "high usage"}
     agent._restore_cleared_throttles = AsyncMock()
 
-    async def last_tick(_):
-        agent.running = False
-
-    agent.running = True
-    with patch("asyncio.sleep", side_effect=last_tick):
-        await agent._policy_check_loop()
+    await _run_one_policy_tick(agent)
 
     assert (await agent.aggregator.aggregate(sample.container_id)).container_status == "stopped"
     agent.storage.save_alert.assert_not_awaited()
@@ -592,12 +594,7 @@ async def test_stop_during_throttle_restore_skips_oom_prediction():
 
     agent._restore_cleared_throttles = AsyncMock(side_effect=stop_during_restore)
 
-    async def last_tick(_):
-        agent.running = False
-
-    agent.running = True
-    with patch("asyncio.sleep", side_effect=last_tick):
-        await agent._policy_check_loop()
+    await _run_one_policy_tick(agent)
 
     agent._restore_cleared_throttles.assert_awaited_once_with(metrics)
     agent.heal_action.predict_oom.assert_not_awaited()
@@ -692,11 +689,13 @@ async def test_oom_prediction_deduplicates_alerts_across_ticks():
     agent.running = True
 
     with patch("dri.main.datetime") as clock:
-        # Drive exact iterations by flipping running False on the final tick.
+        # Finish fast workers before advancing the simulated policy clock.
         async def drive_sleep(_):
-            clock.now.return_value = start + timedelta(seconds=tick_times[tick])
-            if tick == len(snapshots) - 1:
+            await asyncio.gather(*agent._policy_tasks.values())
+            if tick == len(snapshots):
                 agent.running = False
+                return
+            clock.now.return_value = start + timedelta(seconds=tick_times[tick])
 
         async def aggregate_and_advance():
             nonlocal tick
@@ -777,3 +776,59 @@ async def test_failed_oom_alert_save_clears_only_its_provisional_timestamp():
     with pytest.raises(RuntimeError, match="storage unavailable"):
         await agent._on_alert(alert)
     assert agent._oom_last_alerted[cid] == newer_timestamp
+
+
+async def test_slow_restart_allows_other_containers_to_progress_and_shutdown_drains():
+    from tests.test_engine_dedup import _make_agg_metrics, _make_engine
+
+    agent = _make_agent()
+    agent.policy_engine = _make_engine(duration_seconds=0, renotify_seconds=0)
+    agent.policy_engine.evaluate = AsyncMock(wraps=agent.policy_engine.evaluate)
+    agent.config = agent.policy_engine.config
+    agent.config.global_policy.rules[0].action = "restart"
+    first = _make_agg_metrics(container_id="busy")
+    second = _make_agg_metrics(container_id="other")
+    agent.aggregator = MagicMock()
+    started, other_checked, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    agent.aggregator.is_container_stopped.return_value = False
+
+    async def snapshots():
+        # Introduce the second container on a later tick while the first is busy.
+        return {"busy": first, "other": second} if started.is_set() else {"busy": first}
+
+    agent.aggregator.aggregate_all = snapshots
+    agent.config.policy_check_interval = 0
+    agent._restore_cleared_throttles = AsyncMock()
+    agent.heal_action.predict_oom.return_value = {"risk_level": "low"}
+    calls = []
+
+    async def restart(cid, **kwargs):
+        calls.append(cid)
+        if cid == "busy":
+            started.set()
+            await asyncio.wait_for(release.wait(), timeout=30)
+        else:
+            other_checked.set()
+        return {"success": True}
+
+    agent.heal_action.graceful_restart.side_effect = restart
+    agent.running = True
+    loop_task = asyncio.create_task(agent._policy_check_loop())
+    try:
+        await asyncio.wait_for(other_checked.wait(), timeout=2)
+        assert calls == ["busy", "other"]
+        assert "busy" in agent._policy_tasks
+        assert agent.policy_engine.evaluate.await_args_list.count(call(first)) == 1
+        shutdown = asyncio.create_task(agent.shutdown())
+        await asyncio.sleep(0)
+        assert not shutdown.done()
+        agent.storage.close.assert_not_awaited()
+        release.set()
+        await asyncio.wait_for(shutdown, timeout=2)
+        assert agent.storage.save_action.await_count == 2
+        agent.storage.close.assert_awaited_once()
+        assert not agent._policy_tasks
+    finally:
+        release.set()
+        agent.running = False
+        await loop_task

@@ -17,13 +17,41 @@ from .utils.logger import get_logger
 logger = get_logger("config")
 
 
+POLICY_METRICS = {
+    "log_new_templates_5m": "log_new_templates_5m",
+    "log_errors_1m": "log_errors_1m",
+    "log_errors_5m": "log_errors_5m",
+    "log_warnings_5m": "log_warnings_5m",
+    "log_crash_signals_5m": "log_crash_signals_5m",
+    "cpu": "cpu_percent",
+    "cpu_5m": "cpu_percent_5m",
+    "cpu_15m": "cpu_percent_15m",
+    "cpu_60m": "cpu_percent_60m",
+    "memory": "memory_percent",
+    "memory_5m": "memory_percent_5m",
+    "memory_15m": "memory_percent_15m",
+    "memory_60m": "memory_percent_60m",
+    "growth_rate_1m": "memory_growth_rate_1m",
+    "memory_growth_rate_1m": "memory_growth_rate_1m",
+    "growth_rate_5m": "memory_growth_rate_5m",
+    "memory_growth_rate_5m": "memory_growth_rate_5m",
+}
+
+
 class ThresholdRule(BaseModel):
     """Threshold rule for policy evaluation."""
-    metric: str  # "cpu", "memory", "growth_rate"
+    metric: str
     operator: str  # ">", "<", ">="
     value: float
     duration_seconds: int = 60  # How long before triggering
     action: str  # "warning", "throttle", "isolate", "restart"
+
+    @field_validator("metric")
+    @classmethod
+    def validate_metric(cls, value: str) -> str:
+        if value not in POLICY_METRICS:
+            raise ValueError(f"Unknown policy metric {value!r}. Valid metrics: {', '.join(POLICY_METRICS)}")
+        return value
 
     @field_validator("operator")
     @classmethod
@@ -43,9 +71,28 @@ class ThresholdRule(BaseModel):
 class ContainerPolicy(BaseModel):
     """Policy for a container or image."""
     name: str
-    selector: Dict[str, str] = Field(default_factory=dict)  # Labels or image patterns
+    selector: Dict[Literal["image", "container_id"], str] = Field(default_factory=dict)
     rules: List[ThresholdRule] = Field(default_factory=list)
     enabled: bool = True
+
+    @field_validator("selector")
+    @classmethod
+    def validate_selector(cls, selector):
+        if any(not value.strip() for value in selector.values()):
+            raise ValueError("Selector values must be nonempty")
+        if "image" in selector:
+            try:
+                re.compile(selector["image"])
+            except re.error as exc:
+                raise ValueError(f"Invalid image selector regex: {exc}") from exc
+        return selector
+
+    def matches(self, container_id: str, image: str) -> bool:
+        if "container_id" in self.selector and self.selector["container_id"] != container_id:
+            return False
+        if "image" in self.selector:
+            return bool(image and re.search(self.selector["image"], image))
+        return True
 
 
 def throttle_resource(metric: str) -> Optional[str]:

@@ -63,3 +63,33 @@ async def test_image_selector_matches_regex():
     engine = _make_engine_with_image_selector(r"nginx:.*")
     alerts = await engine.evaluate(metrics)
     assert alerts is None, "No alert expected, image regex does not match"
+
+
+@pytest.mark.parametrize(("metric", "selector", "error"), [
+    ("memroy", {"container_id": "abc123"}, "Unknown policy metric"),
+    ("cpu", {"label": "redis"}, "label"),
+    ("cpu", {"image": "["}, "Invalid image selector regex"),
+])
+def test_invalid_yaml_policy_rejected(tmp_path, metric, selector, error):
+    import yaml
+    from pydantic import ValidationError
+    from dri.config import load_config
+
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump({"container_policies": [{
+        "name": "worker", "selector": selector,
+        "rules": [{"metric": metric, "operator": "<", "value": 10, "action": "restart"}],
+    }]}))
+    with pytest.raises(ValidationError, match=error):
+        load_config(str(path))
+
+
+@pytest.mark.parametrize(("cid", "image", "expected"), [
+    ("abc123", "redis:7", 1), ("other", "redis:7", 0), ("abc123", "nginx", 0),
+])
+async def test_selectors_must_all_match_and_apply_once(cid, image, expected):
+    engine = _make_engine_with_image_selector(r"redis:")
+    engine.config.container_policies[0].selector["container_id"] = "abc123"
+    engine.config.alert_renotify_seconds = 0
+    alerts = await engine.evaluate(_make_agg_metrics(container_id=cid, image=image))
+    assert len(alerts or []) == expected

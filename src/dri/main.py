@@ -24,7 +24,7 @@ from .actions.isolate import IsolateAction
 from .actions.heal import HealAction
 from .api.server import DRIAPIServer
 from .utils.logger import setup_logging, get_logger
-from .utils.metrics import Action
+from .utils.metrics import Action, AggregatedMetrics
 from .utils.webhooks import WebhookDispatcher
 
 logger_module = get_logger("main")
@@ -102,6 +102,7 @@ class DRIAgent:
         self._action_cooldowns: dict[tuple, datetime] = {}
         self._ACTION_COOLDOWN_SECONDS: int = 120  # 2 minutes between repeats
         self._oom_last_alerted: dict[str, datetime] = {}
+        self._policy_tasks: dict[str, asyncio.Task] = {}
 
     @property
     def metrics_processed(self) -> int:
@@ -328,6 +329,8 @@ class DRIAgent:
             try:
                 await asyncio.sleep(self.config.policy_check_interval)
 
+                if not self.running:
+                    break
                 if not self.aggregator or not self.policy_engine:
                     continue
 
@@ -337,28 +340,38 @@ class DRIAgent:
                         self.aggregator.update_log_stats(cid, self.log_analyzer.stats(cid))
                 all_metrics = await self.aggregator.aggregate_all()
 
-                for container_id, metrics in all_metrics.items():
-                    if metrics.container_status != "running" or self.aggregator.is_container_stopped(container_id):
-                        self.policy_engine.clear_violations(container_id)
-                        self._oom_last_alerted.pop(container_id, None)
-                        continue
-                    alerts = await self.policy_engine.evaluate(metrics)
-                    if alerts:
-                        # Handle actions based on alert types
-                        for alert in alerts:
-                            await self._handle_alert_action(alert)
-
-                    if self.aggregator.is_container_stopped(container_id):
-                        self._oom_last_alerted.pop(container_id, None)
-                        continue
-                    await self._restore_cleared_throttles(metrics)
-                    if self.aggregator.is_container_stopped(container_id):
-                        self._oom_last_alerted.pop(container_id, None)
-                        continue
-                    await self._check_oom_prediction(metrics)
-
+                if not self.running:
+                    break
+                for cid, metrics in all_metrics.items():
+                    if metrics.container_status != "running" or self.aggregator.is_container_stopped(cid):
+                        self.policy_engine.clear_violations(cid)
+                        self._oom_last_alerted.pop(cid, None)
+                    elif cid not in self._policy_tasks:
+                        # Avoid overlapping actions or queuing stale samples for a busy container.
+                        self._policy_tasks[cid] = asyncio.create_task(self._check_container(metrics))
             except Exception as e:
                 logger_module.error(f"Policy check error: {e}")
+
+    async def _check_container(self, metrics: AggregatedMetrics) -> None:
+        cid = metrics.container_id
+        try:
+            if not self.running or self.aggregator.is_container_stopped(cid):
+                return
+            alerts = await self.policy_engine.evaluate(metrics)
+            for alert in alerts or ():
+                if not self.running:
+                    return
+                await self._handle_alert_action(alert)
+
+            if not self.running or self.aggregator.is_container_stopped(cid):
+                return
+            await self._restore_cleared_throttles(metrics)
+            if self.running and not self.aggregator.is_container_stopped(cid):
+                await self._check_oom_prediction(metrics)
+        except Exception:
+            logger_module.exception(f"Policy check failed for container {cid}")
+        finally:
+            self._policy_tasks.pop(cid, None)
 
     async def _check_oom_prediction(self, metrics) -> None:
         """Emit a deduplicated warning alert when OOM risk is critical."""
@@ -630,14 +643,13 @@ class DRIAgent:
         self.running = True
         logger_module.info("Starting DRI agent...")
 
-        # Setup signal handlers
+        loop = asyncio.get_running_loop()
+        stop_requested = asyncio.Event()
+
         def signal_handler(sig, frame):
             logger_module.info(f"Received signal {sig}, shutting down...")
             self.running = False
-            if self.root_cause:
-                asyncio.get_running_loop().call_soon(self.root_cause.stop)
-            if self.log_collector:
-                self.log_collector.stop()
+            loop.call_soon_threadsafe(stop_requested.set)
 
         signal.signal(signal.SIGTERM, signal_handler)
         signal.signal(signal.SIGINT, signal_handler)
@@ -665,7 +677,20 @@ class DRIAgent:
                 )
                 tasks.append(self.api_server.start())
 
-            await asyncio.gather(*tasks)
+            services = [asyncio.create_task(task) for task in tasks]
+            group = asyncio.gather(*services)
+            stop_waiter = asyncio.create_task(stop_requested.wait())
+            try:
+                await asyncio.wait((group, stop_waiter), return_when=asyncio.FIRST_COMPLETED)
+                if group.done():
+                    await group
+            finally:
+                self.running = False
+                stop_waiter.cancel()
+                for service in services:
+                    if not service.done():
+                        service.cancel()
+                await asyncio.gather(group, stop_waiter, *services, return_exceptions=True)
 
         except Exception as e:
             logger_module.error(f"Agent error: {e}")
@@ -674,9 +699,13 @@ class DRIAgent:
 
     async def shutdown(self) -> None:
         """Shutdown the agent gracefully."""
+        self.running = False
         logger_module.info("Shutting down DRI agent...")
 
         try:
+            # Docker mutations in executor threads cannot be cancelled safely. Let
+            # their owning tasks finish auditing before closing storage and clients.
+            await asyncio.gather(*self._policy_tasks.values())
             if self.root_cause:
                 await self.root_cause.close()
             if self.collector:

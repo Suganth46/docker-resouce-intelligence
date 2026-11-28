@@ -290,9 +290,13 @@ Available policy metrics: `cpu`, `cpu_5m`, `cpu_15m`, `cpu_60m`, `memory`, `memo
 
 CPU rules apply only CPU settings. CPU shares control relative weight under contention. A positive CPU quota can throttle a container with an unlimited quota. Memory rules check Docker’s current usage immediately before tightening an existing limit and leave swap unchanged. DRI skips settings whose unset value Docker cannot restore with a live update (including an unlimited memory limit and unset CPU shares). Choose targets appropriate for the workload.
 
+Policy checks run independently for each container. While an action or webhook is in flight, that container waits for a fresh policy tick before it can act again. Shutdown waits for active actions to finish recording their results.
+
 The action history records the previous and applied limits. While monitoring the container, DRI restores its settings once all matching throttle conditions for that resource clear. Pending restorations survive agent restarts in the configured storage backend. Values changed externally after throttling are preserved.
 
 ### Per-container policy example
+
+An `image` selector searches the Docker image name with a regular expression. A `container_id` selector matches the reported ID exactly. When both are present, both must match. The agent rejects unknown metric names, unsupported selector keys and invalid image expressions when loading the YAML.
 
 ```yaml
 container_policies:

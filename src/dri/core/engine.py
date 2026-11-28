@@ -2,18 +2,15 @@
 
 import asyncio
 import uuid
-import re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Callable, Any
 
-from ..config import DRIConfig, ThresholdRule, throttle_resource
+from ..config import DRIConfig, POLICY_METRICS, ThresholdRule, throttle_resource
 from ..utils.logger import get_logger
 from ..utils.metrics import AggregatedMetrics, Alert
 
 logger = get_logger("engine")
-
-_warned_metrics = set()
 
 RuleKey = tuple[str, tuple[tuple[str, str], ...], str, str, float, int, str]
 
@@ -24,34 +21,7 @@ def _metric_unit(metric: str) -> str:
 
 
 def _resolve_metric_value(metric_name: str, metrics: AggregatedMetrics) -> float:
-    """Resolve metric name to its value, logging a warning if unknown."""
-    metric_map = {
-        "log_new_templates_5m": metrics.log_new_templates_5m,
-        "log_errors_1m": metrics.log_errors_1m,
-        "log_errors_5m": metrics.log_errors_5m,
-        "log_warnings_5m": metrics.log_warnings_5m,
-        "log_crash_signals_5m": metrics.log_crash_signals_5m,
-        "cpu": metrics.cpu_percent,
-        "cpu_5m": metrics.cpu_percent_5m,
-        "cpu_15m": metrics.cpu_percent_15m,
-        "cpu_60m": metrics.cpu_percent_60m,
-        "memory": metrics.memory_percent,
-        "memory_5m": metrics.memory_percent_5m,
-        "memory_15m": metrics.memory_percent_15m,
-        "memory_60m": metrics.memory_percent_60m,
-        "growth_rate_1m": metrics.memory_growth_rate_1m,
-        "memory_growth_rate_1m": metrics.memory_growth_rate_1m,
-        "growth_rate_5m": metrics.memory_growth_rate_5m,
-        "memory_growth_rate_5m": metrics.memory_growth_rate_5m,
-    }
-    
-    if metric_name not in metric_map:
-        if metric_name not in _warned_metrics:
-            logger.warning(f"Unknown metric '{metric_name}' in policy rule")
-            _warned_metrics.add(metric_name)
-        return 0.0
-        
-    return metric_map[metric_name]
+    return getattr(metrics, POLICY_METRICS[metric_name])
 
 
 class PolicyEngine:
@@ -122,26 +92,12 @@ class PolicyEngine:
         return False
 
     def _applicable_policies(self, metrics):
-        # Get applicable policies (global + container-specific)
-        applicable_policies = [self.config.global_policy] if self.config.global_policy.enabled else []
-
-        for policy in self.config.container_policies:
-            if not policy.enabled:
-                continue
-
-            # Check if policy applies to this container
-            for key, value in policy.selector.items():
-                if key == "image":
-                    image_str = getattr(metrics, "image", "") or ""
-                    try:
-                        if image_str and re.search(value, image_str):
-                            applicable_policies.append(policy)
-                    except re.error as e:
-                        logger.error(f"Invalid regex in policy selector for image '{value}': {e}")
-                elif key == "container_id" and value == metrics.container_id:
-                    applicable_policies.append(policy)
-
-        return applicable_policies
+        global_policy = self.config.global_policy
+        return [
+            policy for policy in (global_policy, *self.config.container_policies)
+            if policy.enabled and (policy is global_policy or policy.selector)
+            and policy.matches(metrics.container_id, metrics.image)
+        ]
 
     def throttle_breached(self, metrics, resource):
         """Keep a resource throttled until all matching throttle conditions clear."""
