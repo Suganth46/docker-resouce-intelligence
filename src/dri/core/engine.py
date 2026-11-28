@@ -71,6 +71,11 @@ class PolicyEngine:
         self._last_alerted: Dict[str, Dict[RuleKey, datetime]] = defaultdict(dict)
         self._alert_callbacks: List[Callable] = []
 
+    def clear_violations(self, container_id: str) -> None:
+        """End this container's rule episodes and notification cooldowns."""
+        self._violation_tracker.pop(container_id, None)
+        self._last_alerted.pop(container_id, None)
+
     def register_alert_callback(self, callback: Callable) -> None:
         """Register callback for generated alerts."""
         self._alert_callbacks.append(callback)
@@ -159,6 +164,10 @@ class PolicyEngine:
         Yields:
             Alert if threshold breached
         """
+        if metrics.container_status != "running":
+            self.clear_violations(metrics.container_id)
+            return None
+
         if self.config.excludes_name(metrics.container_name):  # policy_exclude_names
             if metrics.container_id not in self._excluded_ids:
                 self._excluded_ids.add(metrics.container_id)

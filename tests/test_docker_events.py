@@ -143,6 +143,7 @@ async def test_restart_count_tracking():
     event_die = ContainerEvent(die_data)
 
     await agent._on_docker_event(event_die)
+    aggregator.mark_container_stopped.assert_called_once_with(cid)
     assert agent.restart_counts.get(cid, 0) == 0
     assert cid in agent._container_died
 
@@ -155,6 +156,7 @@ async def test_restart_count_tracking():
     event_start = ContainerEvent(start_data)
 
     await agent._on_docker_event(event_start)
+    aggregator.unmark_container_stopped.assert_called_once_with(cid)
     assert agent.restart_counts.get(cid) == 1
     assert cid not in agent._container_died
     aggregator.update_restart_count.assert_called_with(cid, 1)

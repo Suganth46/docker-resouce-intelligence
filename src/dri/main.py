@@ -227,13 +227,15 @@ class DRIAgent:
             f"[container={event.container_id}, name={event.container_name}]"
         )
 
-        if self.storage:
-            await self.storage.save_event(event)
-
         cid = getattr(event, "container_id", "")
         action = getattr(event, "action", "")
 
         if cid:
+            if action in ("die", "stop", "destroy"):
+                self._mark_container_stopped(cid)
+            elif action == "start" and self.aggregator:
+                self.aggregator.unmark_container_stopped(cid)
+
             if action == "die":
                 self._container_died.add(cid)
             elif action == "start":
@@ -242,6 +244,15 @@ class DRIAgent:
                     self._container_died.remove(cid)
                     if self.aggregator:
                         self.aggregator.update_restart_count(cid, self.restart_counts[cid])
+
+        if self.storage:
+            await self.storage.save_event(event)
+
+    def _mark_container_stopped(self, container_id: str) -> None:
+        if self.aggregator:
+            self.aggregator.mark_container_stopped(container_id)
+        if self.policy_engine:
+            self.policy_engine.clear_violations(container_id)
 
     async def _collect_metrics_loop(self) -> None:
         """Continuously collect metrics."""
@@ -319,12 +330,17 @@ class DRIAgent:
                 all_metrics = await self.aggregator.aggregate_all()
 
                 for container_id, metrics in all_metrics.items():
+                    if metrics.container_status != "running" or self.aggregator.is_container_stopped(container_id):
+                        self.policy_engine.clear_violations(container_id)
+                        continue
                     alerts = await self.policy_engine.evaluate(metrics)
                     if alerts:
                         # Handle actions based on alert types
                         for alert in alerts:
                             await self._handle_alert_action(alert)
 
+                    if self.aggregator.is_container_stopped(container_id):
+                        continue
                     await self._restore_cleared_throttles(metrics)
 
                     # P0-3: OOM prediction — emit a warning alert when risk is critical
@@ -375,6 +391,9 @@ class DRIAgent:
 
     async def _handle_alert_action(self, alert) -> None:
         """Handle actions triggered by alerts."""
+        # Alert callbacks can yield while a Docker stop event is processed.
+        if self.aggregator and self.aggregator.is_container_stopped(alert.container_id):
+            return
         if alert.alert_type in ("throttle", "isolate", "restart") and self.config.excludes_name(
             alert.container_name
         ):  # policy_exclude_names
@@ -528,8 +547,8 @@ class DRIAgent:
 
         1. Calls ``collector.get_all_containers()`` to obtain the full list
            including stopped/exited containers.
-        2. Diffs the running subset against ``_known_running`` to detect
-           containers that have stopped or restarted since the last tick.
+        2. Checks every retained metrics window against Docker's running set,
+           including containers that exited before the first poll.
         3. Calls ``aggregator.mark_container_stopped()`` /
            ``unmark_container_stopped()`` accordingly.
         4. Calls ``aggregator.cleanup_stopped_containers()`` to evict windows
@@ -544,9 +563,6 @@ class DRIAgent:
             f"cleanup after: {self.config.container_status_cleanup_minutes}m)"
         )
 
-        # 12-char IDs of containers that were running on the previous tick.
-        _known_running: set = set()
-
         while self.running:
             try:
                 await asyncio.sleep(self.config.container_status_interval)
@@ -554,7 +570,7 @@ class DRIAgent:
                 if not self.running:
                     break
 
-                all_containers = await self.collector.get_all_containers()
+                all_containers = await self.collector.get_all_containers(raise_on_error=True)
 
                 # Build the current running set (12-char IDs).
                 current_running: set = {
@@ -563,26 +579,16 @@ class DRIAgent:
                     if getattr(c, "status", "") == "running"
                 }
 
-                # Containers that just stopped (were running, now absent from
-                # the running set, but still have a window in the aggregator).
-                newly_stopped = (
-                    _known_running - current_running
-                ) & set(self.aggregator._windows.keys())
-
-                for cid in newly_stopped:
-                    self.aggregator.mark_container_stopped(cid)
-
-                # Containers that restarted (were stopped, now running again).
-                newly_running = current_running - _known_running
-                for cid in newly_running:
-                    self.aggregator.unmark_container_stopped(cid)
+                for cid in list(self.aggregator._windows):
+                    if cid in current_running:
+                        self.aggregator.unmark_container_stopped(cid)
+                    else:
+                        self._mark_container_stopped(cid)
 
                 # Evict windows for containers stopped longer than the grace period.
                 self.aggregator.cleanup_stopped_containers(
                     max_stopped_minutes=self.config.container_status_cleanup_minutes
                 )
-
-                _known_running = current_running
 
             except Exception as e:
                 logger_module.error(f"Container status poll error: {e}")

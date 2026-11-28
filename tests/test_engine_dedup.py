@@ -154,3 +154,17 @@ async def test_matching_policy_starts_its_own_episode():
             clock.now.return_value = start + timedelta(seconds=seconds)
             counts.append(len(await engine.evaluate(metrics) or []))
     assert counts == [0, 0, 1, 1]
+
+
+async def test_stop_ends_the_rule_episode_and_notification_cooldown():
+    engine = _make_engine(duration_seconds=10, renotify_seconds=300)
+    metrics = _make_agg_metrics()
+    start = metrics.timestamp
+    counts = []
+    with patch("dri.core.engine.datetime") as clock:
+        for seconds, status in [(0, "running"), (10, "running"), (11, "stopped"),
+                                (40, "running"), (50, "running")]:
+            metrics.container_status = status
+            clock.now.return_value = start + timedelta(seconds=seconds)
+            counts.append(len(await engine.evaluate(metrics) or []))
+    assert counts == [0, 1, 0, 0, 1]

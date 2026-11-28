@@ -67,7 +67,7 @@ class DockerStatsCollector:
             logger.error(f"Failed to get containers: {e}")
             return []
 
-    async def get_all_containers(self) -> list:
+    async def get_all_containers(self, *, raise_on_error: bool = False) -> list:
         """Get list of ALL containers, including stopped/exited/paused ones.
 
         Each returned container object exposes a ``.status`` attribute whose
@@ -81,7 +81,7 @@ class DockerStatsCollector:
 
         Returns:
             List of :class:`docker.models.containers.Container` objects,
-            possibly empty on error.
+            empty on error unless raise_on_error is set.
         """
         if not self.client:
             raise RuntimeError("Not connected to Docker daemon")
@@ -95,6 +95,8 @@ class DockerStatsCollector:
             containers = await loop.run_in_executor(None, _get_all)
             return containers
         except Exception as e:
+            if raise_on_error:
+                raise
             logger.error(f"Failed to get all containers: {e}")
             return []
 

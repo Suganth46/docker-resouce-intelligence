@@ -25,6 +25,7 @@ def _make_docker_client(container):
 def _make_container(name="test-container"):
     c = MagicMock()
     c.name = name
+    c.status = "running"
     c.id = "abc123def456"
     c.attrs = {"HostConfig": {"CpuShares": 1024, "CpuQuota": 0, "Memory": 2**30,
                               "MemoryReservation": 512 * 2**20, "MemorySwap": 2**31}}
@@ -334,6 +335,7 @@ async def test_policy_check_loop_calls_predict_oom_and_emits_warning_alert():
     )
 
     mock_aggregator = AsyncMock()
+    mock_aggregator.is_container_stopped = MagicMock(return_value=False)
     mock_aggregator.aggregate_all = AsyncMock(return_value={"crit001": critical_metrics})
     agent.aggregator = mock_aggregator
 
@@ -520,3 +522,96 @@ async def test_unlimited_cpu_quota_recorded_and_restored():
     assert result["previous"] == {"cpu_quota": 0}
     assert (await action.restore("abc", "cpu"))["success"]
     assert container.update.call_args_list == [call(cpu_quota=50000), call(cpu_quota=-1)]
+
+
+@pytest.mark.parametrize("status", ["exited", "paused", "restarting"])
+async def test_graceful_restart_skips_non_running_container(status):
+    from dri.actions.heal import HealAction
+
+    container = _make_container()
+    container.status = status
+    result = await HealAction(_make_docker_client(container)).graceful_restart(container.id)
+    assert not result["success"]
+    assert status in result["error"]
+    container.stop.assert_not_called()
+    container.start.assert_not_called()
+
+
+async def test_stopped_window_emits_no_alerts_or_actions():
+    from dri.config import ThresholdRule
+    from dri.core.aggregator import MetricsAggregator
+    from dri.core.engine import PolicyEngine
+    from tests.test_phase1 import _make_metrics
+
+    agent = _make_agent()
+    agent.config.global_policy.rules = [
+        ThresholdRule(metric="memory", operator=">", value=95, duration_seconds=0, action="restart")
+    ]
+    agent.policy_engine = PolicyEngine(agent.config)
+    agent.policy_engine.register_alert_callback(agent._on_alert)
+    agent.storage.get_recent_metrics.return_value = []
+    agent.aggregator = MetricsAggregator(agent.storage)
+    sample = _make_metrics()
+    sample.memory_percent = 97.0
+    agent.aggregator.add_metrics(sample)
+    agent.aggregator.mark_container_stopped(sample.container_id)
+    agent.heal_action.predict_oom.return_value = {"risk_level": "critical", "reason": "high usage"}
+    agent._restore_cleared_throttles = AsyncMock()
+
+    async def last_tick(_):
+        agent.running = False
+
+    agent.running = True
+    with patch("asyncio.sleep", side_effect=last_tick):
+        await agent._policy_check_loop()
+
+    assert (await agent.aggregator.aggregate(sample.container_id)).container_status == "stopped"
+    agent.storage.save_alert.assert_not_awaited()
+    agent.storage.save_action.assert_not_awaited()
+    agent.heal_action.graceful_restart.assert_not_awaited()
+    agent.heal_action.predict_oom.assert_not_awaited()
+    agent._restore_cleared_throttles.assert_not_awaited()
+
+
+async def test_first_status_poll_recognizes_exited_window():
+    from dri.core.aggregator import MetricsAggregator
+    from tests.test_engine_dedup import _make_agg_metrics, _make_engine
+    from tests.test_phase1 import _make_metrics
+
+    agent = _make_agent()
+    agent.aggregator = MetricsAggregator(agent.storage)
+    agent.storage.get_recent_metrics.return_value = []
+    container = _make_container()
+    container.status = "exited"
+    cid = container.id
+    agent.aggregator.add_metrics(_make_metrics(container_id=cid))
+    agent.policy_engine = _make_engine(duration_seconds=0)
+    breach = _make_agg_metrics(container_id=cid)
+    assert await agent.policy_engine.evaluate(breach)
+    agent.collector = AsyncMock()
+    agent.collector.get_all_containers.return_value = [container]
+
+    async def tick(_):
+        agent.running = agent.collector.get_all_containers.await_count == 0
+
+    agent.running = True
+    with patch("asyncio.sleep", side_effect=tick):
+        await agent._container_status_loop()
+
+    retained = await agent.aggregator.aggregate(cid)
+    assert retained.container_status == "stopped"
+    assert await agent.policy_engine.evaluate(breach)  # previous notification cooldown ended
+
+
+async def test_stop_during_alert_callback_blocks_restart_dispatch():
+    from dri.core.aggregator import MetricsAggregator
+    from dri.events.listener import ContainerEvent
+
+    agent = _make_agent()
+    agent.aggregator = MetricsAggregator(agent.storage)
+    alert = _make_alert(alert_type="restart")
+    event = ContainerEvent({"Action": "stop", "Actor": {"ID": alert.container_id}})
+    await agent._on_docker_event(event)
+    await agent._handle_alert_action(alert)
+    agent.heal_action.graceful_restart.assert_not_awaited()
+    agent.storage.save_action.assert_not_awaited()

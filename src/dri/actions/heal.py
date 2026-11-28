@@ -98,9 +98,13 @@ class HealAction:
             try:
                 container = self.client.containers.get(container_id)
 
-                logger.info(
-                    f"Gracefully restarted container container_id={container_id} reason={reason}"
-                )
+                # containers.get() inspects Docker again at dispatch time.
+                status = container.status
+                if status != "running":
+                    return {
+                        "success": False,
+                        "error": f"Skipping restart of {container_id}: Docker status is {status}",
+                    }
 
                 # Stop container gracefully
                 container.stop(timeout=stop_timeout)

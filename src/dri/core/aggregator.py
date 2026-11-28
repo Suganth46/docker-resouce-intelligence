@@ -303,7 +303,7 @@ class MetricsAggregator:
             growth_5m = await self._calculate_growth_rate_hybrid(container_id, 5)
 
             # Determine container status from the stopped-at registry.
-            status = "stopped" if container_id in self._stopped_at else "running"
+            status = "stopped" if self.is_container_stopped(container_id) else "running"
             restart_count = self.restart_counts.get(latest.container_id, 0)
 
             logs = self._log_stats.get(container_id) or LogStats()
@@ -402,6 +402,10 @@ class MetricsAggregator:
     # ------------------------------------------------------------------
     # Stopped-container lifecycle tracking
     # ------------------------------------------------------------------
+
+    def is_container_stopped(self, container_id: str) -> bool:
+        """Return the latest observed lifecycle state, including events since aggregation."""
+        return container_id in self._stopped_at
 
     def mark_container_stopped(self, container_id: str) -> None:
         """Record that a container has stopped.
